@@ -23,6 +23,13 @@ bool retryInProgress = false;
 unsigned long retryStartTime = 0;
 AsyncWebServerRequest* retryRequest = nullptr;
 
+// Save credentials variables
+bool saveInProgress = false;
+unsigned long saveStartTime = 0;
+AsyncWebServerRequest* saveRequest = nullptr;
+String newSSID = "";
+String newPassword = "";
+
 // Auto-reconnect variables
 unsigned long lastWiFiCheck = 0;
 const unsigned long WIFI_CHECK_INTERVAL = 10000; // Check every 10 seconds
@@ -434,10 +441,14 @@ const char index_html[] PROGMEM = R"rawliteral(
                 if (xhr.status === 200) {
                     status.style.display = 'block';
                     status.style.color = '#28a745';
-                    status.textContent = 'Connected successfully! Device will restart and connect to WiFi...';
+                    status.style.fontSize = '16px';
+                    status.style.fontWeight = 'bold';
+                    // Use the exact message from server
+                    status.textContent = xhr.responseText;
                 } else {
                     status.style.display = 'block';
                     status.style.color = '#dc3545';
+                    status.style.fontSize = '16px';
                     if (xhr.status === 400) {
                         status.textContent = xhr.responseText;
                     } else {
@@ -462,7 +473,7 @@ String getMacLastDigits() {
 }
 
 // Start Access Point Mode
-void startAPMode() {
+void startAPMode(bool hideSSID = false) {
   isAPMode = true;
   String apSSID = "ppiot-" + getMacLastDigits();
 
@@ -471,9 +482,11 @@ void startAPMode() {
   Serial.println(apSSID);
   Serial.print("AP Password: ");
   Serial.println(AP_PASSWORD);
+  Serial.print("SSID Hidden: ");
+  Serial.println(hideSSID ? "Yes" : "No");
 
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(apSSID.c_str(), AP_PASSWORD);
+  WiFi.mode(WIFI_AP_STA); // Always use AP+STA mode
+  WiFi.softAP(apSSID.c_str(), AP_PASSWORD, 1, hideSSID); // hideSSID parameter
 
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
@@ -597,9 +610,14 @@ void startAPMode() {
   });
 
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (saveInProgress) {
+      request->send(400, "text/plain", "Save already in progress");
+      return;
+    }
+
     if (request->hasParam("ssid", true) && request->hasParam("password", true)) {
-      String newSSID = request->getParam("ssid", true)->value();
-      String newPassword = request->getParam("password", true)->value();
+      newSSID = request->getParam("ssid", true)->value();
+      newPassword = request->getParam("password", true)->value();
 
       Serial.println("Received WiFi credentials:");
       Serial.print("SSID: ");
@@ -607,40 +625,15 @@ void startAPMode() {
 
       // Try to connect to the new WiFi first
       Serial.println("Testing connection to new WiFi...");
-      WiFi.mode(WIFI_AP_STA); // Keep AP running while testing
+
+      // Already in AP+STA mode, just start WiFi connection
       WiFi.begin(newSSID.c_str(), newPassword.c_str());
 
-      int attempts = 0;
-      bool connected = false;
-      while (attempts < 20 && !connected) {
-        delay(500);
-        Serial.print(".");
-        if (WiFi.status() == WL_CONNECTED) {
-          connected = true;
-          Serial.println("\nSuccessfully connected to new WiFi!");
-          Serial.print("IP address: ");
-          Serial.println(WiFi.localIP());
-        }
-        attempts++;
-      }
+      saveInProgress = true;
+      saveStartTime = millis();
+      saveRequest = request;
 
-      if (connected) {
-        // Only save credentials if connection was successful
-        preferences.begin("wifi", false);
-        preferences.putString("ssid", newSSID);
-        preferences.putString("password", newPassword);
-        preferences.end();
-
-        request->send(200, "text/plain", "OK");
-        Serial.println("New credentials saved. Restarting...");
-        delay(1000);
-        ESP.restart();
-      } else {
-        // Connection failed, keep old credentials
-        Serial.println("\nFailed to connect to new WiFi. Keeping old credentials.");
-        WiFi.disconnect();
-        request->send(400, "text/plain", "Failed to connect to WiFi. Please check credentials and try again.");
-      }
+      // Don't send response yet - will be handled in loop()
     } else {
       request->send(400, "text/plain", "Missing parameters");
     }
@@ -746,18 +739,22 @@ void setup() {
 
   if (ssid.length() > 0) {
     Serial.println("Found saved WiFi credentials");
+
+    // Always start AP mode first (hidden initially)
+    startAPMode(true); // Start with hidden SSID
+
     if (connectToWiFi()) {
       isAPMode = false;
-      Serial.println("Device is in Station Mode");
+      Serial.println("Device connected to WiFi - AP running in background (hidden)");
     } else {
       Serial.println("Failed to connect to saved WiFi");
-      Serial.println("Starting AP mode while continuously trying to reconnect...");
-      // Do NOT clear credentials - keep them for auto-reconnect
-      // Start in AP+STA mode:
-      // - AP mode for user configuration via web portal
-      // - STA mode for auto-reconnect attempts in background
+      Serial.println("Making AP visible and continuously trying to reconnect...");
+
+      // Make AP visible since connection failed
+      WiFi.softAP(("ppiot-" + getMacLastDigits()).c_str(), AP_PASSWORD, 1, false);
+      Serial.println("AP SSID is now visible for configuration");
+
       isAPMode = true;
-      startAPMode();
 
       // Enable auto-reconnect for background connection attempts
       Serial.println("Auto-reconnect enabled - will keep trying in background");
@@ -765,11 +762,62 @@ void setup() {
     }
   } else {
     Serial.println("No saved credentials found");
-    startAPMode();
+    startAPMode(false); // Visible AP
   }
 }
 
 void loop() {
+  // Handle async save connection from web interface
+  if (saveInProgress && saveRequest != nullptr) {
+    unsigned long elapsed = millis() - saveStartTime;
+
+    // Check connection status
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nSuccessfully connected to new WiFi!");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+
+      // Save credentials
+      preferences.begin("wifi", false);
+      preferences.putString("ssid", newSSID);
+      preferences.putString("password", newPassword);
+      preferences.end();
+
+      // Send success response - AP still active in WIFI_AP_STA mode
+      AsyncWebServerResponse *response = saveRequest->beginResponse(200, "text/plain", "✅ Connected successfully! Device will restart in 3 seconds...");
+      response->addHeader("Connection", "close");
+      response->addHeader("Cache-Control", "no-cache");
+      saveRequest->send(response);
+
+      saveRequest = nullptr;
+      saveInProgress = false;
+
+      Serial.println("New credentials saved.");
+      Serial.println("Hiding AP SSID and keeping connection...");
+
+      // Hide AP SSID since we're connected
+      String apSSID = "ppiot-" + getMacLastDigits();
+      WiFi.softAP(apSSID.c_str(), AP_PASSWORD, 1, true); // Hide SSID
+      isAPMode = false;
+
+      // Wait to ensure message is delivered, then restart
+      delay(3000);
+      Serial.println("Restarting now...");
+      ESP.restart();
+    } else if (elapsed > 10000) {
+      // Timeout after 10 seconds
+      Serial.println("\nFailed to connect to new WiFi. Keeping old credentials.");
+      WiFi.disconnect();
+
+      saveRequest->send(400, "text/plain", "Failed to connect to WiFi. Please check credentials and try again.");
+      saveRequest = nullptr;
+      saveInProgress = false;
+    }
+    // Otherwise keep waiting
+    delay(100);
+    return;
+  }
+
   // Handle async retry connection from web interface
   if (retryInProgress && retryRequest != nullptr) {
     unsigned long elapsed = millis() - retryStartTime;
@@ -914,13 +962,15 @@ void loop() {
           autoReconnecting = false;
           autoReconnectStartTime = 0;
 
-          // If we were in AP mode and successfully connected, switch to station mode only
+          // If we were in AP mode and successfully connected, hide the AP SSID
           if (isAPMode) {
-            Serial.println("[AUTO-RECONNECT] Switching from AP mode to Station mode...");
+            Serial.println("[AUTO-RECONNECT] Connected! Hiding AP SSID...");
             isAPMode = false;
-            WiFi.softAPdisconnect(true); // Stop AP
-            WiFi.mode(WIFI_STA); // Station mode only
-            Serial.println("[AUTO-RECONNECT] AP mode stopped, device now in Station mode");
+
+            // Keep AP running but hide SSID
+            String apSSID = "ppiot-" + getMacLastDigits();
+            WiFi.softAP(apSSID.c_str(), AP_PASSWORD, 1, true); // Hide SSID
+            Serial.println("[AUTO-RECONNECT] AP SSID hidden, device connected to WiFi");
           }
         }
       }
