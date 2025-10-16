@@ -27,6 +27,8 @@ AsyncWebServerRequest* retryRequest = nullptr;
 unsigned long lastWiFiCheck = 0;
 const unsigned long WIFI_CHECK_INTERVAL = 10000; // Check every 10 seconds
 bool autoReconnecting = false;
+unsigned long autoReconnectStartTime = 0;
+const unsigned long AUTO_RECONNECT_TIMEOUT = 30000; // 30 seconds timeout
 
 // HTML for the configuration portal
 const char index_html[] PROGMEM = R"rawliteral(
@@ -798,9 +800,36 @@ void loop() {
     if (currentMillis - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
       lastWiFiCheck = currentMillis;
 
-      if (WiFi.status() != WL_CONNECTED) {
+      wl_status_t status = WiFi.status();
+
+      // Check if WiFi is disconnected or blocked
+      if (status != WL_CONNECTED) {
         if (!autoReconnecting) {
+          // Start new reconnection attempt
           Serial.println("\n[AUTO-RECONNECT] WiFi disconnected! Attempting to reconnect...");
+          Serial.print("[AUTO-RECONNECT] Status: ");
+
+          // Log the specific WiFi status
+          switch(status) {
+            case WL_NO_SSID_AVAIL:
+              Serial.println("SSID not available");
+              break;
+            case WL_CONNECT_FAILED:
+              Serial.println("Connection failed");
+              break;
+            case WL_CONNECTION_LOST:
+              Serial.println("Connection lost");
+              break;
+            case WL_DISCONNECTED:
+              Serial.println("Disconnected");
+              break;
+            case WL_IDLE_STATUS:
+              Serial.println("Idle/blocked");
+              break;
+            default:
+              Serial.println(status);
+              break;
+          }
 
           // Get saved credentials
           preferences.begin("wifi", true);
@@ -811,12 +840,43 @@ void loop() {
           if (savedSSID.length() > 0) {
             Serial.print("[AUTO-RECONNECT] Connecting to: ");
             Serial.println(savedSSID);
+
+            // Disconnect first to clear any stuck state
+            WiFi.disconnect(true);
+            delay(100);
+
+            // Reconnect
             WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
             autoReconnecting = true;
+            autoReconnectStartTime = currentMillis;
           }
         } else {
           // Already trying to reconnect, check progress
-          Serial.print(".");
+          unsigned long reconnectElapsed = currentMillis - autoReconnectStartTime;
+
+          if (reconnectElapsed > AUTO_RECONNECT_TIMEOUT) {
+            // Reconnection timeout - restart the attempt
+            Serial.println("\n[AUTO-RECONNECT] Timeout! Retrying...");
+
+            // Get saved credentials again
+            preferences.begin("wifi", true);
+            String savedSSID = preferences.getString("ssid", "");
+            String savedPassword = preferences.getString("password", "");
+            preferences.end();
+
+            if (savedSSID.length() > 0) {
+              // Force disconnect and try again
+              WiFi.disconnect(true);
+              delay(100);
+              WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+              autoReconnectStartTime = currentMillis;
+            } else {
+              autoReconnecting = false;
+            }
+          } else {
+            // Show progress
+            Serial.print(".");
+          }
         }
       } else {
         // Connected successfully
@@ -825,6 +885,7 @@ void loop() {
           Serial.print("[AUTO-RECONNECT] IP address: ");
           Serial.println(WiFi.localIP());
           autoReconnecting = false;
+          autoReconnectStartTime = 0;
         }
       }
     }
