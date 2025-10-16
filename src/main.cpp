@@ -5,7 +5,7 @@
 
 const int LED_PIN = 2;
 const int RESET_BUTTON_PIN = 0; // GPIO 0 - Usually the BOOT button on ESP32
-const unsigned long RESET_HOLD_TIME = 10000; // 10 seconds in milliseconds
+const unsigned long RESET_HOLD_TIME = 5000; // 5 seconds in milliseconds
 
 const char* AP_PASSWORD = "12345678"; // Minimum 8 characters for WPA2
 
@@ -15,6 +15,7 @@ AsyncWebServer server(80);
 String ssid = "";
 String password = "";
 bool isAPMode = false;
+bool hasStoredCredentials = false; // Cache to avoid repeated NVS reads when empty
 
 unsigned long buttonPressStart = 0;
 bool buttonPressed = false;
@@ -30,12 +31,24 @@ AsyncWebServerRequest* saveRequest = nullptr;
 String newSSID = "";
 String newPassword = "";
 
+// Check credentials variables
+bool checkInProgress = false;
+unsigned long checkStartTime = 0;
+AsyncWebServerRequest* checkRequest = nullptr;
+String checkSSID = "";
+String checkPassword = "";
+
 // Auto-reconnect variables
 unsigned long lastWiFiCheck = 0;
 const unsigned long WIFI_CHECK_INTERVAL = 10000; // Check every 10 seconds
 bool autoReconnecting = false;
 unsigned long autoReconnectStartTime = 0;
 const unsigned long AUTO_RECONNECT_TIMEOUT = 30000; // 30 seconds timeout
+
+// LED blink variables
+unsigned long lastLEDToggle = 0;
+const unsigned long LED_BLINK_INTERVAL = 500; // 500ms blink interval
+bool ledState = false;
 
 // HTML for the configuration portal
 const char index_html[] PROGMEM = R"rawliteral(
@@ -184,6 +197,28 @@ const char index_html[] PROGMEM = R"rawliteral(
             cursor: not-allowed;
             transform: none;
         }
+        .check-btn {
+            width: 100%;
+            padding: 12px;
+            background: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 10px;
+            transition: transform 0.2s;
+        }
+        .check-btn:hover {
+            background: #138496;
+            transform: translateY(-2px);
+        }
+        .check-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
         .divider {
             text-align: center;
             margin: 20px 0;
@@ -274,6 +309,7 @@ const char index_html[] PROGMEM = R"rawliteral(
                     <button type="button" class="toggle-password" onclick="togglePassword()">👁️</button>
                 </div>
             </div>
+            <button type="button" class="check-btn" onclick="checkConnection()" id="checkBtn">🔍 Check Connection</button>
             <button type="submit">Save & Connect</button>
         </form>
         <div class="status" id="status"></div>
@@ -292,6 +328,50 @@ const char index_html[] PROGMEM = R"rawliteral(
                 }
             };
             xhr.send();
+        }
+
+        function checkConnection() {
+            var ssid = document.getElementById('ssid').value;
+            var password = document.getElementById('password').value;
+            var checkBtn = document.getElementById('checkBtn');
+            var status = document.getElementById('status');
+
+            if (!ssid || !password) {
+                status.style.display = 'block';
+                status.style.color = '#dc3545';
+                status.textContent = 'Please select a network and enter password';
+                return;
+            }
+
+            checkBtn.disabled = true;
+            checkBtn.textContent = 'Testing...';
+            status.style.display = 'block';
+            status.style.color = '#17a2b8';
+            status.textContent = 'Testing connection... Please wait.';
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/check', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.onload = function() {
+                checkBtn.disabled = false;
+                checkBtn.textContent = '🔍 Check Connection';
+                status.style.display = 'block';
+                if (xhr.status === 200) {
+                    status.style.color = '#28a745';
+                    status.textContent = '✅ ' + xhr.responseText;
+                } else {
+                    status.style.color = '#dc3545';
+                    status.textContent = '❌ ' + xhr.responseText;
+                }
+            };
+            xhr.onerror = function() {
+                checkBtn.disabled = false;
+                checkBtn.textContent = '🔍 Check Connection';
+                status.style.display = 'block';
+                status.style.color = '#dc3545';
+                status.textContent = 'Connection error - Please try again';
+            };
+            xhr.send('ssid=' + encodeURIComponent(ssid) + '&password=' + encodeURIComponent(password));
         }
 
         function retryConnection() {
@@ -472,8 +552,28 @@ String getMacLastDigits() {
   return String(macStr);
 }
 
+// Helper function to load saved WiFi credentials
+bool loadSavedCredentials(String &savedSSID, String &savedPassword) {
+  // Use cached flag to avoid repeated NVS reads when no credentials exist
+  if (!hasStoredCredentials) {
+    savedSSID = "";
+    savedPassword = "";
+    return false;
+  }
+
+  if (preferences.begin("wifi", true)) {
+    savedSSID = preferences.getString("ssid", "");
+    savedPassword = preferences.getString("password", "");
+    preferences.end();
+    return savedSSID.length() > 0;
+  }
+  savedSSID = "";
+  savedPassword = "";
+  return false;
+}
+
 // Start Access Point Mode
-void startAPMode(bool hideSSID = false) {
+void startAPMode() {
   isAPMode = true;
   String apSSID = "ppiot-" + getMacLastDigits();
 
@@ -482,11 +582,9 @@ void startAPMode(bool hideSSID = false) {
   Serial.println(apSSID);
   Serial.print("AP Password: ");
   Serial.println(AP_PASSWORD);
-  Serial.print("SSID Hidden: ");
-  Serial.println(hideSSID ? "Yes" : "No");
 
   WiFi.mode(WIFI_AP_STA); // Always use AP+STA mode
-  WiFi.softAP(apSSID.c_str(), AP_PASSWORD, 1, hideSSID); // hideSSID parameter
+  WiFi.softAP(apSSID.c_str(), AP_PASSWORD); // Always visible
 
   IPAddress IP = WiFi.softAPIP();
   Serial.print("AP IP address: ");
@@ -494,7 +592,7 @@ void startAPMode(bool hideSSID = false) {
 
   // Setup web server
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", index_html);
+    request->send(200, "text/html", index_html);
   });
 
   server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -566,13 +664,7 @@ void startAPMode(bool hideSSID = false) {
     // Get saved credentials
     String savedSSID = "";
     String savedPassword = "";
-    if (preferences.begin("wifi", true)) {
-      savedSSID = preferences.getString("ssid", "");
-      savedPassword = preferences.getString("password", "");
-      preferences.end();
-    }
-
-    if (savedSSID.length() == 0) {
+    if (!loadSavedCredentials(savedSSID, savedPassword)) {
       request->send(400, "text/plain", "No saved credentials found");
       return;
     }
@@ -582,7 +674,6 @@ void startAPMode(bool hideSSID = false) {
     Serial.println(savedSSID);
 
     // Start connection attempt
-    WiFi.mode(WIFI_AP_STA); // Keep AP running while testing
     WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
 
     retryInProgress = true;
@@ -595,18 +686,48 @@ void startAPMode(bool hideSSID = false) {
   server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request){
     // Return saved SSID (not password for security)
     String savedSSID = "";
-    if (preferences.begin("wifi", true)) {
-      savedSSID = preferences.getString("ssid", "");
-      preferences.end();
-    }
+    String savedPassword = "";
+    bool hasCredentials = loadSavedCredentials(savedSSID, savedPassword);
 
     String json = "{";
     json += "\"saved_ssid\":\"" + savedSSID + "\",";
     json += "\"has_saved\":";
-    json += (savedSSID.length() > 0) ? "true" : "false";
+    json += hasCredentials ? "true" : "false";
     json += "}";
 
     request->send(200, "application/json", json);
+  });
+
+  server.on("/check", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (checkInProgress) {
+      request->send(400, "text/plain", "Check already in progress");
+      return;
+    }
+
+    if (saveInProgress || retryInProgress) {
+      request->send(400, "text/plain", "Another operation in progress");
+      return;
+    }
+
+    if (request->hasParam("ssid", true) && request->hasParam("password", true)) {
+      checkSSID = request->getParam("ssid", true)->value();
+      checkPassword = request->getParam("password", true)->value();
+
+      Serial.println("[CHECK] Testing WiFi credentials:");
+      Serial.print("[CHECK] SSID: ");
+      Serial.println(checkSSID);
+
+      // Start connection test
+      WiFi.begin(checkSSID.c_str(), checkPassword.c_str());
+
+      checkInProgress = true;
+      checkStartTime = millis();
+      checkRequest = request;
+
+      // Don't send response yet - will be handled in loop()
+    } else {
+      request->send(400, "text/plain", "Missing parameters");
+    }
   });
 
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
@@ -623,17 +744,23 @@ void startAPMode(bool hideSSID = false) {
       Serial.print("SSID: ");
       Serial.println(newSSID);
 
-      // Try to connect to the new WiFi first
+      // Send immediate acknowledgment to keep browser connection alive
+      request->send(202, "text/plain", "Testing connection... Please wait.");
+
+      // Try to connect to the new WiFi
       Serial.println("Testing connection to new WiFi...");
+
+      // Small delay to ensure response is sent
+      delay(100);
 
       // Already in AP+STA mode, just start WiFi connection
       WiFi.begin(newSSID.c_str(), newPassword.c_str());
 
       saveInProgress = true;
       saveStartTime = millis();
-      saveRequest = request;
+      saveRequest = nullptr; // No request to respond to later
 
-      // Don't send response yet - will be handled in loop()
+      // Connection result will be handled in loop()
     } else {
       request->send(400, "text/plain", "Missing parameters");
     }
@@ -652,7 +779,6 @@ bool connectToWiFi() {
   Serial.print("SSID: ");
   Serial.println(ssid);
 
-  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid.c_str(), password.c_str());
 
   int attempts = 0;
@@ -705,6 +831,9 @@ void setup() {
       preferences.clear();
       preferences.end();
 
+      // Clear cache flag
+      hasStoredCredentials = false;
+
       Serial.println("[RESET] WiFi credentials cleared!");
 
       // Fast blink to confirm reset
@@ -725,34 +854,34 @@ void setup() {
     return;
   }
 
-  // Try to load saved credentials
+  // Try to load saved credentials (read directly from NVS on boot)
   if (preferences.begin("wifi", true)) {
     ssid = preferences.getString("ssid", "");
     password = preferences.getString("password", "");
     preferences.end();
+    hasStoredCredentials = (ssid.length() > 0);
   } else {
-    // NVS namespace doesn't exist yet (first boot)
-    Serial.println("No saved credentials (first boot or after factory reset)");
     ssid = "";
     password = "";
+    hasStoredCredentials = false;
+  }
+
+  if (!hasStoredCredentials) {
+    Serial.println("No saved credentials (first boot or after factory reset)");
   }
 
   if (ssid.length() > 0) {
     Serial.println("Found saved WiFi credentials");
 
-    // Always start AP mode first (hidden initially)
-    startAPMode(true); // Start with hidden SSID
+    // Always start AP mode first
+    startAPMode();
 
     if (connectToWiFi()) {
       isAPMode = false;
-      Serial.println("Device connected to WiFi - AP running in background (hidden)");
+      Serial.println("Device connected to WiFi - AP running in background");
     } else {
       Serial.println("Failed to connect to saved WiFi");
-      Serial.println("Making AP visible and continuously trying to reconnect...");
-
-      // Make AP visible since connection failed
-      WiFi.softAP(("ppiot-" + getMacLastDigits()).c_str(), AP_PASSWORD, 1, false);
-      Serial.println("AP SSID is now visible for configuration");
+      Serial.println("AP visible for configuration, continuously trying to reconnect...");
 
       isAPMode = true;
 
@@ -762,13 +891,13 @@ void setup() {
     }
   } else {
     Serial.println("No saved credentials found");
-    startAPMode(false); // Visible AP
+    startAPMode();
   }
 }
 
 void loop() {
   // Handle async save connection from web interface
-  if (saveInProgress && saveRequest != nullptr) {
+  if (saveInProgress) {
     unsigned long elapsed = millis() - saveStartTime;
 
     // Check connection status
@@ -783,38 +912,61 @@ void loop() {
       preferences.putString("password", newPassword);
       preferences.end();
 
-      // Send success response - AP still active in WIFI_AP_STA mode
-      AsyncWebServerResponse *response = saveRequest->beginResponse(200, "text/plain", "✅ Connected successfully! Device will restart in 3 seconds...");
-      response->addHeader("Connection", "close");
-      response->addHeader("Cache-Control", "no-cache");
-      saveRequest->send(response);
+      // Update cache flag since we now have stored credentials
+      hasStoredCredentials = true;
 
-      saveRequest = nullptr;
+      // Update global credentials
+      ssid = newSSID;
+      password = newPassword;
+
       saveInProgress = false;
 
-      Serial.println("New credentials saved.");
-      Serial.println("Hiding AP SSID and keeping connection...");
+      Serial.println("New credentials saved and connected successfully!");
+      Serial.println("Device is now connected to WiFi. AP still running in background.");
 
-      // Hide AP SSID since we're connected
-      String apSSID = "ppiot-" + getMacLastDigits();
-      WiFi.softAP(apSSID.c_str(), AP_PASSWORD, 1, true); // Hide SSID
+      // Switch to connected mode (turn off AP mode LED blinking)
       isAPMode = false;
-
-      // Wait to ensure message is delivered, then restart
-      delay(3000);
-      Serial.println("Restarting now...");
-      ESP.restart();
     } else if (elapsed > 10000) {
       // Timeout after 10 seconds
       Serial.println("\nFailed to connect to new WiFi. Keeping old credentials.");
       WiFi.disconnect();
 
-      saveRequest->send(400, "text/plain", "Failed to connect to WiFi. Please check credentials and try again.");
-      saveRequest = nullptr;
       saveInProgress = false;
+      Serial.println("Connection failed - please try again");
     }
-    // Otherwise keep waiting
-    delay(100);
+    // Otherwise keep waiting (non-blocking)
+    return;
+  }
+
+  // Handle async check connection from web interface
+  if (checkInProgress && checkRequest != nullptr) {
+    unsigned long elapsed = millis() - checkStartTime;
+
+    // Check connection status
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n[CHECK] Connection test successful!");
+      Serial.print("[CHECK] IP address: ");
+      Serial.println(WiFi.localIP());
+
+      checkRequest->send(200, "text/plain", "Connection successful! Credentials are valid.");
+      checkRequest = nullptr;
+      checkInProgress = false;
+
+      // Disconnect from test connection to return to original state
+      WiFi.disconnect();
+      delay(100);
+    } else if (elapsed > 10000) {
+      // Timeout after 10 seconds
+      Serial.println("\n[CHECK] Connection test failed - timeout");
+
+      checkRequest->send(400, "text/plain", "Connection failed. Please check credentials.");
+      checkRequest = nullptr;
+      checkInProgress = false;
+
+      // Disconnect from failed attempt
+      WiFi.disconnect();
+    }
+    // Otherwise keep waiting (non-blocking)
     return;
   }
 
@@ -829,17 +981,15 @@ void loop() {
       Serial.println(WiFi.localIP());
 
       // Send success response
-      AsyncWebServerResponse *response = retryRequest->beginResponse(200, "text/plain", "Connected successfully! Device will restart in 2 seconds...");
-      response->addHeader("Connection", "close");
-      retryRequest->send(response);
+      retryRequest->send(200, "text/plain", "Connected successfully!");
 
       retryRequest = nullptr;
       retryInProgress = false;
 
-      // Wait a bit then restart
-      delay(2000);
-      Serial.println("[RETRY] Restarting device...");
-      ESP.restart();
+      Serial.println("[RETRY] Device is now connected to WiFi. AP still running in background.");
+
+      // Switch to connected mode (turn off AP mode LED blinking)
+      isAPMode = false;
     } else if (elapsed > 10000) {
       // Timeout after 10 seconds
       Serial.println("\n[RETRY] Failed to reconnect - timeout");
@@ -850,8 +1000,7 @@ void loop() {
       retryInProgress = false;
       autoReconnecting = false;
     }
-    // Otherwise keep waiting
-    delay(100);
+    // Otherwise keep waiting (non-blocking)
     return;
   }
 
@@ -868,6 +1017,12 @@ void loop() {
       // Check if WiFi is disconnected or blocked
       if (status != WL_CONNECTED) {
         if (!autoReconnecting) {
+          // Check if we have credentials before attempting reconnection
+          if (!hasStoredCredentials) {
+            // No credentials saved, skip auto-reconnect entirely
+            return;
+          }
+
           // Start new reconnection attempt
           Serial.println("\n[AUTO-RECONNECT] WiFi disconnected! Attempting to reconnect...");
           Serial.print("[AUTO-RECONNECT] Status: ");
@@ -897,13 +1052,8 @@ void loop() {
           // Get saved credentials
           String savedSSID = "";
           String savedPassword = "";
-          if (preferences.begin("wifi", true)) {
-            savedSSID = preferences.getString("ssid", "");
-            savedPassword = preferences.getString("password", "");
-            preferences.end();
-          }
 
-          if (savedSSID.length() > 0) {
+          if (loadSavedCredentials(savedSSID, savedPassword)) {
             Serial.print("[AUTO-RECONNECT] Connecting to: ");
             Serial.println(savedSSID);
 
@@ -912,9 +1062,7 @@ void loop() {
             delay(100);
 
             // Reconnect in AP+STA mode if AP is active
-            if (isAPMode) {
-              WiFi.mode(WIFI_AP_STA); // Keep AP running while connecting
-            }
+
             WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
             autoReconnecting = true;
             autoReconnectStartTime = currentMillis;
@@ -930,19 +1078,12 @@ void loop() {
             // Get saved credentials again
             String savedSSID = "";
             String savedPassword = "";
-            if (preferences.begin("wifi", true)) {
-              savedSSID = preferences.getString("ssid", "");
-              savedPassword = preferences.getString("password", "");
-              preferences.end();
-            }
 
-            if (savedSSID.length() > 0) {
+            if (loadSavedCredentials(savedSSID, savedPassword)) {
               // Force disconnect and try again
               WiFi.disconnect(true);
               delay(100);
-              if (isAPMode) {
-                WiFi.mode(WIFI_AP_STA); // Keep AP running
-              }
+
               WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
               autoReconnectStartTime = currentMillis;
             } else {
@@ -962,30 +1103,26 @@ void loop() {
           autoReconnecting = false;
           autoReconnectStartTime = 0;
 
-          // If we were in AP mode and successfully connected, hide the AP SSID
+          // If we were in AP mode and successfully connected
           if (isAPMode) {
-            Serial.println("[AUTO-RECONNECT] Connected! Hiding AP SSID...");
+            Serial.println("[AUTO-RECONNECT] Connected! AP still running in background");
             isAPMode = false;
-
-            // Keep AP running but hide SSID
-            String apSSID = "ppiot-" + getMacLastDigits();
-            WiFi.softAP(apSSID.c_str(), AP_PASSWORD, 1, true); // Hide SSID
-            Serial.println("[AUTO-RECONNECT] AP SSID hidden, device connected to WiFi");
           }
         }
       }
     }
   }
 
-  // Blink LED only when in AP mode (hotspot active)
+  // Non-blocking LED blink - only when in AP mode (hotspot active)
   if (isAPMode) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(500);
-    digitalWrite(LED_PIN, LOW);
-    delay(500);
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastLEDToggle >= LED_BLINK_INTERVAL) {
+      lastLEDToggle = currentMillis;
+      ledState = !ledState;
+      digitalWrite(LED_PIN, ledState ? HIGH : LOW);
+    }
   } else {
     // Keep LED off when connected to WiFi
     digitalWrite(LED_PIN, LOW);
-    delay(100);
   }
 }
