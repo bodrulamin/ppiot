@@ -255,9 +255,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             <div class="form-group">
                 <label for="ssid">Select WiFi Network:</label>
                 <select id="ssid" name="ssid" required>
-                    <option value="">Loading networks...</option>
+                    <option value="">Click refresh to scan networks</option>
                 </select>
-                <button type="button" class="refresh-btn" onclick="scanNetworks()">🔄 Refresh</button>
+                <button type="button" class="refresh-btn" onclick="scanNetworks()">🔄 Scan Networks</button>
                 <div class="loading" id="loading" style="display:none;">Scanning...</div>
             </div>
             <div class="form-group">
@@ -415,10 +415,10 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
         }
 
-        // Load saved info and networks on page load
+        // Load saved info on page load (don't auto-scan networks)
         window.addEventListener('load', function() {
             loadSavedInfo();
-            scanNetworks();
+            // User must click refresh button to scan networks
         });
 
         document.getElementById('wifiForm').addEventListener('submit', function(e) {
