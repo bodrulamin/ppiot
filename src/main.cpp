@@ -126,6 +126,68 @@ const char index_html[] PROGMEM = R"rawliteral(
             font-size: 14px;
             margin-top: 5px;
         }
+        .saved-info {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .saved-info strong {
+            color: #856404;
+            display: block;
+            margin-bottom: 10px;
+        }
+        .saved-ssid {
+            color: #856404;
+            font-weight: bold;
+            font-size: 16px;
+            margin: 10px 0;
+        }
+        .retry-btn {
+            width: 100%;
+            padding: 12px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: transform 0.2s;
+        }
+        .retry-btn:hover {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+        .retry-btn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .divider {
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+        .divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: #ddd;
+        }
+        .divider span {
+            background: white;
+            padding: 0 15px;
+            position: relative;
+            color: #999;
+            font-size: 14px;
+        }
         button {
             width: 100%;
             padding: 12px;
@@ -167,6 +229,18 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="info">
             Enter your WiFi credentials to connect this device to your network
         </div>
+
+        <div id="savedCredentials" style="display:none;">
+            <div class="saved-info">
+                <strong>Saved WiFi Configuration</strong>
+                <div class="saved-ssid" id="savedSSID"></div>
+                <button type="button" class="retry-btn" onclick="retryConnection()" id="retryBtn">
+                    🔄 Retry Connection
+                </button>
+            </div>
+            <div class="divider"><span>OR CONFIGURE NEW WIFI</span></div>
+        </div>
+
         <form id="wifiForm">
             <div class="form-group">
                 <label for="ssid">Select WiFi Network:</label>
@@ -188,6 +262,54 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="status" id="status"></div>
     </div>
     <script>
+        function loadSavedInfo() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/info', true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    var info = JSON.parse(xhr.responseText);
+                    if (info.has_saved) {
+                        document.getElementById('savedCredentials').style.display = 'block';
+                        document.getElementById('savedSSID').textContent = info.saved_ssid;
+                    }
+                }
+            };
+            xhr.send();
+        }
+
+        function retryConnection() {
+            var retryBtn = document.getElementById('retryBtn');
+            var status = document.getElementById('status');
+
+            retryBtn.disabled = true;
+            retryBtn.textContent = 'Connecting...';
+            status.style.display = 'none';
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/retry', true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    status.style.display = 'block';
+                    status.style.color = '#28a745';
+                    status.textContent = xhr.responseText;
+                } else {
+                    retryBtn.disabled = false;
+                    retryBtn.textContent = '🔄 Retry Connection';
+                    status.style.display = 'block';
+                    status.style.color = '#dc3545';
+                    status.textContent = xhr.responseText;
+                }
+            };
+            xhr.onerror = function() {
+                retryBtn.disabled = false;
+                retryBtn.textContent = '🔄 Retry Connection';
+                status.style.display = 'block';
+                status.style.color = '#dc3545';
+                status.textContent = 'Connection error - Please try again';
+            };
+            xhr.send();
+        }
+
         function getSignalIcon(rssi) {
             if (rssi > -50) return '📶';
             if (rssi > -60) return '📶';
@@ -283,8 +405,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             }
         }
 
-        // Load networks on page load
+        // Load saved info and networks on page load
         window.addEventListener('load', function() {
+            loadSavedInfo();
             scanNetworks();
         });
 
@@ -409,6 +532,66 @@ void startAPMode() {
       json += "]";
       request->send(200, "application/json", json);
     }
+  });
+
+  server.on("/retry", HTTP_GET, [](AsyncWebServerRequest *request){
+    // Get saved credentials
+    preferences.begin("wifi", true);
+    String savedSSID = preferences.getString("ssid", "");
+    String savedPassword = preferences.getString("password", "");
+    preferences.end();
+
+    if (savedSSID.length() == 0) {
+      request->send(400, "text/plain", "No saved credentials found");
+      return;
+    }
+
+    Serial.println("[RETRY] Attempting to reconnect to saved WiFi...");
+    Serial.print("[RETRY] SSID: ");
+    Serial.println(savedSSID);
+
+    // Try to connect to saved WiFi
+    WiFi.mode(WIFI_AP_STA); // Keep AP running while testing
+    WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+
+    int attempts = 0;
+    bool connected = false;
+    while (attempts < 20 && !connected) {
+      delay(500);
+      Serial.print(".");
+      if (WiFi.status() == WL_CONNECTED) {
+        connected = true;
+        Serial.println("\n[RETRY] Successfully reconnected!");
+        Serial.print("[RETRY] IP address: ");
+        Serial.println(WiFi.localIP());
+      }
+      attempts++;
+    }
+
+    if (connected) {
+      request->send(200, "text/plain", "Connected successfully! Device will restart...");
+      delay(1000);
+      ESP.restart();
+    } else {
+      Serial.println("\n[RETRY] Failed to reconnect");
+      WiFi.disconnect();
+      request->send(400, "text/plain", "Failed to connect. WiFi may be down or password changed.");
+    }
+  });
+
+  server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request){
+    // Return saved SSID (not password for security)
+    preferences.begin("wifi", true);
+    String savedSSID = preferences.getString("ssid", "");
+    preferences.end();
+
+    String json = "{";
+    json += "\"saved_ssid\":\"" + savedSSID + "\",";
+    json += "\"has_saved\":";
+    json += (savedSSID.length() > 0) ? "true" : "false";
+    json += "}";
+
+    request->send(200, "application/json", json);
   });
 
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
