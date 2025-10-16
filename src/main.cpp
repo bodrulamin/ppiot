@@ -4,6 +4,9 @@
 #include <Preferences.h>
 
 const int LED_PIN = 2;
+const int RESET_BUTTON_PIN = 0; // GPIO 0 - Usually the BOOT button on ESP32
+const unsigned long RESET_HOLD_TIME = 10000; // 10 seconds in milliseconds
+
 const char* AP_PASSWORD = "12345678"; // Minimum 8 characters for WPA2
 
 Preferences preferences;
@@ -12,6 +15,10 @@ AsyncWebServer server(80);
 String ssid = "";
 String password = "";
 bool isAPMode = false;
+
+unsigned long buttonPressStart = 0;
+bool buttonPressed = false;
+bool scanInProgress = false;
 
 // HTML for the configuration portal
 const char index_html[] PROGMEM = R"rawliteral(
@@ -350,20 +357,37 @@ void startAPMode() {
 
     if (n == -2) {
       // Scan not triggered yet, start it
-      Serial.println("[SCAN] Starting WiFi network scan...");
-      WiFi.scanNetworks(true);
+      if (!scanInProgress) {
+        Serial.println("[SCAN] Starting WiFi network scan...");
+        scanInProgress = true;
+        WiFi.scanNetworks(true);
+      }
       json += "]";
       request->send(200, "application/json", json);
     } else if (n == -1) {
-      // Scan in progress
-      Serial.println("[SCAN] Scan in progress...");
+      // Scan in progress - don't log repeatedly
       json += "]";
       request->send(200, "application/json", json);
     } else {
       // Scan complete, return results
-      Serial.print("[SCAN] Scan complete! Found ");
-      Serial.print(n);
-      Serial.println(" networks:");
+      if (scanInProgress) {
+        Serial.print("[SCAN] Scan complete! Found ");
+        Serial.print(n);
+        Serial.println(" networks:");
+
+        for (int i = 0; i < n; ++i) {
+          // Log each network found
+          Serial.print("  ");
+          Serial.print(i + 1);
+          Serial.print(". ");
+          Serial.print(WiFi.SSID(i));
+          Serial.print(" (");
+          Serial.print(WiFi.RSSI(i));
+          Serial.print(" dBm) ");
+          Serial.println(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "[Secured]" : "[Open]");
+        }
+        scanInProgress = false;
+      }
 
       for (int i = 0; i < n; ++i) {
         if (i) json += ",";
@@ -374,21 +398,14 @@ void startAPMode() {
         json += ",\"channel\":" + String(WiFi.channel(i));
         json += ",\"secure\":" + String(WiFi.encryptionType(i));
         json += "}";
-
-        // Log each network found
-        Serial.print("  ");
-        Serial.print(i + 1);
-        Serial.print(". ");
-        Serial.print(WiFi.SSID(i));
-        Serial.print(" (");
-        Serial.print(WiFi.RSSI(i));
-        Serial.print(" dBm) ");
-        Serial.println(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "[Secured]" : "[Open]");
       }
 
       WiFi.scanDelete();
-      // Trigger next scan for next time
-      WiFi.scanNetworks(true);
+      // Prepare for next scan
+      if (WiFi.scanComplete() == -2) {
+        WiFi.scanNetworks(true);
+        scanInProgress = true;
+      }
       json += "]";
       request->send(200, "application/json", json);
     }
@@ -481,9 +498,54 @@ bool connectToWiFi() {
 void setup() {
   Serial.begin(115200);
   pinMode(LED_PIN, OUTPUT);
+  pinMode(RESET_BUTTON_PIN, INPUT_PULLUP); // Use internal pullup resistor
 
   delay(1000);
   Serial.println("\n\n=== PPIOT Device Starting ===");
+
+  // Check if reset button is held during boot
+  Serial.println("Checking for factory reset button press...");
+  unsigned long resetCheckStart = millis();
+  bool factoryReset = false;
+
+  // Check if button is held for 10 seconds at startup
+  while (millis() - resetCheckStart < RESET_HOLD_TIME) {
+    if (digitalRead(RESET_BUTTON_PIN) == HIGH) {
+      // Button released, stop checking
+      break;
+    }
+
+    // Blink LED fast to indicate reset mode
+    digitalWrite(LED_PIN, (millis() / 200) % 2);
+
+    if (millis() - resetCheckStart >= RESET_HOLD_TIME) {
+      factoryReset = true;
+      Serial.println("\n[RESET] Factory reset triggered!");
+
+      // Clear all saved credentials
+      preferences.begin("wifi", false);
+      preferences.clear();
+      preferences.end();
+
+      Serial.println("[RESET] WiFi credentials cleared!");
+
+      // Fast blink to confirm reset
+      for (int i = 0; i < 10; i++) {
+        digitalWrite(LED_PIN, HIGH);
+        delay(100);
+        digitalWrite(LED_PIN, LOW);
+        delay(100);
+      }
+    }
+  }
+
+  digitalWrite(LED_PIN, LOW);
+
+  if (factoryReset) {
+    Serial.println("[RESET] Starting in AP mode after factory reset");
+    startAPMode();
+    return;
+  }
 
   // Try to load saved credentials
   preferences.begin("wifi", true);
@@ -497,11 +559,13 @@ void setup() {
       isAPMode = false;
       Serial.println("Device is in Station Mode");
     } else {
-      Serial.println("Failed to connect, starting AP mode");
-      // Clear invalid credentials
-      preferences.begin("wifi", false);
-      preferences.clear();
-      preferences.end();
+      Serial.println("Failed to connect to saved WiFi");
+      Serial.println("Keeping credentials and starting AP mode for reconfiguration");
+      // Do NOT clear credentials - keep them for user reference
+      // User can either:
+      // 1. Try again later (WiFi might be down temporarily)
+      // 2. Reconfigure via web portal
+      // 3. Factory reset if needed
       startAPMode();
     }
   } else {
