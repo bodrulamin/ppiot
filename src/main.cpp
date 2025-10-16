@@ -551,10 +551,13 @@ void startAPMode() {
     }
 
     // Get saved credentials
-    preferences.begin("wifi", true);
-    String savedSSID = preferences.getString("ssid", "");
-    String savedPassword = preferences.getString("password", "");
-    preferences.end();
+    String savedSSID = "";
+    String savedPassword = "";
+    if (preferences.begin("wifi", true)) {
+      savedSSID = preferences.getString("ssid", "");
+      savedPassword = preferences.getString("password", "");
+      preferences.end();
+    }
 
     if (savedSSID.length() == 0) {
       request->send(400, "text/plain", "No saved credentials found");
@@ -578,9 +581,11 @@ void startAPMode() {
 
   server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request){
     // Return saved SSID (not password for security)
-    preferences.begin("wifi", true);
-    String savedSSID = preferences.getString("ssid", "");
-    preferences.end();
+    String savedSSID = "";
+    if (preferences.begin("wifi", true)) {
+      savedSSID = preferences.getString("ssid", "");
+      preferences.end();
+    }
 
     String json = "{";
     json += "\"saved_ssid\":\"" + savedSSID + "\",";
@@ -728,10 +733,16 @@ void setup() {
   }
 
   // Try to load saved credentials
-  preferences.begin("wifi", true);
-  ssid = preferences.getString("ssid", "");
-  password = preferences.getString("password", "");
-  preferences.end();
+  if (preferences.begin("wifi", true)) {
+    ssid = preferences.getString("ssid", "");
+    password = preferences.getString("password", "");
+    preferences.end();
+  } else {
+    // NVS namespace doesn't exist yet (first boot)
+    Serial.println("No saved credentials (first boot or after factory reset)");
+    ssid = "";
+    password = "";
+  }
 
   if (ssid.length() > 0) {
     Serial.println("Found saved WiFi credentials");
@@ -836,10 +847,13 @@ void loop() {
           }
 
           // Get saved credentials
-          preferences.begin("wifi", true);
-          String savedSSID = preferences.getString("ssid", "");
-          String savedPassword = preferences.getString("password", "");
-          preferences.end();
+          String savedSSID = "";
+          String savedPassword = "";
+          if (preferences.begin("wifi", true)) {
+            savedSSID = preferences.getString("ssid", "");
+            savedPassword = preferences.getString("password", "");
+            preferences.end();
+          }
 
           if (savedSSID.length() > 0) {
             Serial.print("[AUTO-RECONNECT] Connecting to: ");
@@ -866,10 +880,13 @@ void loop() {
             Serial.println("\n[AUTO-RECONNECT] Timeout! Retrying...");
 
             // Get saved credentials again
-            preferences.begin("wifi", true);
-            String savedSSID = preferences.getString("ssid", "");
-            String savedPassword = preferences.getString("password", "");
-            preferences.end();
+            String savedSSID = "";
+            String savedPassword = "";
+            if (preferences.begin("wifi", true)) {
+              savedSSID = preferences.getString("ssid", "");
+              savedPassword = preferences.getString("password", "");
+              preferences.end();
+            }
 
             if (savedSSID.length() > 0) {
               // Force disconnect and try again
