@@ -19,6 +19,14 @@ bool isAPMode = false;
 unsigned long buttonPressStart = 0;
 bool buttonPressed = false;
 bool scanInProgress = false;
+bool retryInProgress = false;
+unsigned long retryStartTime = 0;
+AsyncWebServerRequest* retryRequest = nullptr;
+
+// Auto-reconnect variables
+unsigned long lastWiFiCheck = 0;
+const unsigned long WIFI_CHECK_INTERVAL = 10000; // Check every 10 seconds
+bool autoReconnecting = false;
 
 // HTML for the configuration portal
 const char index_html[] PROGMEM = R"rawliteral(
@@ -535,6 +543,11 @@ void startAPMode() {
   });
 
   server.on("/retry", HTTP_GET, [](AsyncWebServerRequest *request){
+    if (retryInProgress) {
+      request->send(400, "text/plain", "Retry already in progress");
+      return;
+    }
+
     // Get saved credentials
     preferences.begin("wifi", true);
     String savedSSID = preferences.getString("ssid", "");
@@ -550,33 +563,15 @@ void startAPMode() {
     Serial.print("[RETRY] SSID: ");
     Serial.println(savedSSID);
 
-    // Try to connect to saved WiFi
+    // Start connection attempt
     WiFi.mode(WIFI_AP_STA); // Keep AP running while testing
     WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
 
-    int attempts = 0;
-    bool connected = false;
-    while (attempts < 20 && !connected) {
-      delay(500);
-      Serial.print(".");
-      if (WiFi.status() == WL_CONNECTED) {
-        connected = true;
-        Serial.println("\n[RETRY] Successfully reconnected!");
-        Serial.print("[RETRY] IP address: ");
-        Serial.println(WiFi.localIP());
-      }
-      attempts++;
-    }
+    retryInProgress = true;
+    retryStartTime = millis();
+    retryRequest = request;
 
-    if (connected) {
-      request->send(200, "text/plain", "Connected successfully! Device will restart...");
-      delay(1000);
-      ESP.restart();
-    } else {
-      Serial.println("\n[RETRY] Failed to reconnect");
-      WiFi.disconnect();
-      request->send(400, "text/plain", "Failed to connect. WiFi may be down or password changed.");
-    }
+    // Don't send response yet - will be handled in loop()
   });
 
   server.on("/info", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -758,6 +753,83 @@ void setup() {
 }
 
 void loop() {
+  // Handle async retry connection from web interface
+  if (retryInProgress && retryRequest != nullptr) {
+    unsigned long elapsed = millis() - retryStartTime;
+
+    // Check connection status
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\n[RETRY] Successfully reconnected!");
+      Serial.print("[RETRY] IP address: ");
+      Serial.println(WiFi.localIP());
+
+      // Send success response
+      AsyncWebServerResponse *response = retryRequest->beginResponse(200, "text/plain", "Connected successfully! Device will restart in 2 seconds...");
+      response->addHeader("Connection", "close");
+      retryRequest->send(response);
+
+      retryRequest = nullptr;
+      retryInProgress = false;
+
+      // Wait a bit then restart
+      delay(2000);
+      Serial.println("[RETRY] Restarting device...");
+      ESP.restart();
+    } else if (elapsed > 10000) {
+      // Timeout after 10 seconds
+      Serial.println("\n[RETRY] Failed to reconnect - timeout");
+      WiFi.disconnect();
+
+      retryRequest->send(400, "text/plain", "Failed to connect. WiFi may be down or password changed.");
+      retryRequest = nullptr;
+      retryInProgress = false;
+      autoReconnecting = false;
+    }
+    // Otherwise keep waiting
+    delay(100);
+    return;
+  }
+
+  // Auto-reconnect logic for station mode
+  if (!isAPMode && !retryInProgress) {
+    unsigned long currentMillis = millis();
+
+    // Check WiFi status periodically
+    if (currentMillis - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
+      lastWiFiCheck = currentMillis;
+
+      if (WiFi.status() != WL_CONNECTED) {
+        if (!autoReconnecting) {
+          Serial.println("\n[AUTO-RECONNECT] WiFi disconnected! Attempting to reconnect...");
+
+          // Get saved credentials
+          preferences.begin("wifi", true);
+          String savedSSID = preferences.getString("ssid", "");
+          String savedPassword = preferences.getString("password", "");
+          preferences.end();
+
+          if (savedSSID.length() > 0) {
+            Serial.print("[AUTO-RECONNECT] Connecting to: ");
+            Serial.println(savedSSID);
+            WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
+            autoReconnecting = true;
+          }
+        } else {
+          // Already trying to reconnect, check progress
+          Serial.print(".");
+        }
+      } else {
+        // Connected successfully
+        if (autoReconnecting) {
+          Serial.println("\n[AUTO-RECONNECT] Successfully reconnected!");
+          Serial.print("[AUTO-RECONNECT] IP address: ");
+          Serial.println(WiFi.localIP());
+          autoReconnecting = false;
+        }
+      }
+    }
+  }
+
   // Blink LED only when in AP mode (hotspot active)
   if (isAPMode) {
     digitalWrite(LED_PIN, HIGH);
