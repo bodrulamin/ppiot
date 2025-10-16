@@ -740,13 +740,17 @@ void setup() {
       Serial.println("Device is in Station Mode");
     } else {
       Serial.println("Failed to connect to saved WiFi");
-      Serial.println("Keeping credentials and starting AP mode for reconfiguration");
-      // Do NOT clear credentials - keep them for user reference
-      // User can either:
-      // 1. Try again later (WiFi might be down temporarily)
-      // 2. Reconfigure via web portal
-      // 3. Factory reset if needed
+      Serial.println("Starting AP mode while continuously trying to reconnect...");
+      // Do NOT clear credentials - keep them for auto-reconnect
+      // Start in AP+STA mode:
+      // - AP mode for user configuration via web portal
+      // - STA mode for auto-reconnect attempts in background
+      isAPMode = true;
       startAPMode();
+
+      // Enable auto-reconnect for background connection attempts
+      Serial.println("Auto-reconnect enabled - will keep trying in background");
+      autoReconnecting = false; // Will be triggered by the loop
     }
   } else {
     Serial.println("No saved credentials found");
@@ -792,8 +796,8 @@ void loop() {
     return;
   }
 
-  // Auto-reconnect logic for station mode
-  if (!isAPMode && !retryInProgress) {
+  // Auto-reconnect logic - works in both AP mode and station mode
+  if (!retryInProgress) {
     unsigned long currentMillis = millis();
 
     // Check WiFi status periodically
@@ -845,7 +849,10 @@ void loop() {
             WiFi.disconnect(true);
             delay(100);
 
-            // Reconnect
+            // Reconnect in AP+STA mode if AP is active
+            if (isAPMode) {
+              WiFi.mode(WIFI_AP_STA); // Keep AP running while connecting
+            }
             WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
             autoReconnecting = true;
             autoReconnectStartTime = currentMillis;
@@ -868,6 +875,9 @@ void loop() {
               // Force disconnect and try again
               WiFi.disconnect(true);
               delay(100);
+              if (isAPMode) {
+                WiFi.mode(WIFI_AP_STA); // Keep AP running
+              }
               WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
               autoReconnectStartTime = currentMillis;
             } else {
@@ -886,6 +896,15 @@ void loop() {
           Serial.println(WiFi.localIP());
           autoReconnecting = false;
           autoReconnectStartTime = 0;
+
+          // If we were in AP mode and successfully connected, switch to station mode only
+          if (isAPMode) {
+            Serial.println("[AUTO-RECONNECT] Switching from AP mode to Station mode...");
+            isAPMode = false;
+            WiFi.softAPdisconnect(true); // Stop AP
+            WiFi.mode(WIFI_STA); // Station mode only
+            Serial.println("[AUTO-RECONNECT] AP mode stopped, device now in Station mode");
+          }
         }
       }
     }
