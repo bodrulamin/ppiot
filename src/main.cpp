@@ -85,6 +85,40 @@ const char index_html[] PROGMEM = R"rawliteral(
         .toggle-password:hover {
             transform: translateY(-50%) scale(1.1);
         }
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            box-sizing: border-box;
+            font-size: 16px;
+            background-color: white;
+            cursor: pointer;
+        }
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .refresh-btn {
+            margin-top: 5px;
+            padding: 8px 15px;
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #555;
+            width: auto;
+        }
+        .refresh-btn:hover {
+            background: #e0e0e0;
+            transform: none;
+        }
+        .loading {
+            color: #667eea;
+            font-size: 14px;
+            margin-top: 5px;
+        }
         button {
             width: 100%;
             padding: 12px;
@@ -128,8 +162,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         </div>
         <form id="wifiForm">
             <div class="form-group">
-                <label for="ssid">WiFi SSID:</label>
-                <input type="text" id="ssid" name="ssid" required placeholder="Enter WiFi name">
+                <label for="ssid">Select WiFi Network:</label>
+                <select id="ssid" name="ssid" required>
+                    <option value="">Loading networks...</option>
+                </select>
+                <button type="button" class="refresh-btn" onclick="scanNetworks()">🔄 Refresh</button>
+                <div class="loading" id="loading" style="display:none;">Scanning...</div>
             </div>
             <div class="form-group">
                 <label for="password">WiFi Password:</label>
@@ -143,6 +181,88 @@ const char index_html[] PROGMEM = R"rawliteral(
         <div class="status" id="status"></div>
     </div>
     <script>
+        function getSignalIcon(rssi) {
+            if (rssi > -50) return '📶';
+            if (rssi > -60) return '📶';
+            if (rssi > -70) return '📡';
+            return '📉';
+        }
+
+        function scanNetworks() {
+            var loading = document.getElementById('loading');
+            var select = document.getElementById('ssid');
+            var refreshBtn = document.querySelector('.refresh-btn');
+
+            loading.style.display = 'block';
+            refreshBtn.disabled = true;
+            select.disabled = true;
+            select.innerHTML = '<option value="">Scanning...</option>';
+
+            // Start scanning on the server first
+            var scanStart = new XMLHttpRequest();
+            scanStart.open('GET', '/scan', true);
+            scanStart.send();
+
+            // Poll for results
+            var pollAttempts = 0;
+            var maxPolls = 10;
+
+            function pollForResults() {
+                pollAttempts++;
+
+                var xhr = new XMLHttpRequest();
+                xhr.open('GET', '/scan', true);
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        var networks = JSON.parse(xhr.responseText);
+
+                        // If no networks yet and we haven't exceeded max polls, try again
+                        if (networks.length === 0 && pollAttempts < maxPolls) {
+                            setTimeout(pollForResults, 1000);
+                            return;
+                        }
+
+                        // Done scanning
+                        loading.style.display = 'none';
+                        refreshBtn.disabled = false;
+                        select.disabled = false;
+
+                        select.innerHTML = '<option value="">-- Select Network --</option>';
+
+                        if (networks.length === 0) {
+                            select.innerHTML = '<option value="">No networks found - Try Refresh</option>';
+                        } else {
+                            networks.forEach(function(network) {
+                                if (network.ssid && network.ssid.trim() !== '') {
+                                    var option = document.createElement('option');
+                                    option.value = network.ssid;
+                                    var icon = getSignalIcon(network.rssi);
+                                    var lock = network.secure !== 0 ? '🔒' : '🔓';
+                                    option.textContent = icon + ' ' + network.ssid + ' ' + lock;
+                                    select.appendChild(option);
+                                }
+                            });
+                        }
+                    } else {
+                        loading.style.display = 'none';
+                        refreshBtn.disabled = false;
+                        select.disabled = false;
+                        select.innerHTML = '<option value="">Error scanning - Try Refresh</option>';
+                    }
+                };
+                xhr.onerror = function() {
+                    loading.style.display = 'none';
+                    refreshBtn.disabled = false;
+                    select.disabled = false;
+                    select.innerHTML = '<option value="">Connection error - Try Refresh</option>';
+                };
+                xhr.send();
+            }
+
+            // Start polling after initial delay
+            setTimeout(pollForResults, 2000);
+        }
+
         function togglePassword() {
             var passwordInput = document.getElementById('password');
             var toggleBtn = document.querySelector('.toggle-password');
@@ -155,6 +275,11 @@ const char index_html[] PROGMEM = R"rawliteral(
                 toggleBtn.textContent = '👁️';
             }
         }
+
+        // Load networks on page load
+        window.addEventListener('load', function() {
+            scanNetworks();
+        });
 
         document.getElementById('wifiForm').addEventListener('submit', function(e) {
             e.preventDefault();
@@ -169,11 +294,15 @@ const char index_html[] PROGMEM = R"rawliteral(
                 if (xhr.status === 200) {
                     status.style.display = 'block';
                     status.style.color = '#28a745';
-                    status.textContent = 'Configuration saved! Device will restart and connect to WiFi...';
+                    status.textContent = 'Connected successfully! Device will restart and connect to WiFi...';
                 } else {
                     status.style.display = 'block';
                     status.style.color = '#dc3545';
-                    status.textContent = 'Error saving configuration!';
+                    if (xhr.status === 400) {
+                        status.textContent = xhr.responseText;
+                    } else {
+                        status.textContent = 'Error: Could not save configuration!';
+                    }
                 }
             };
             xhr.send('ssid=' + encodeURIComponent(ssid) + '&password=' + encodeURIComponent(password));
@@ -215,25 +344,101 @@ void startAPMode() {
     request->send_P(200, "text/html", index_html);
   });
 
+  server.on("/scan", HTTP_GET, [](AsyncWebServerRequest *request){
+    String json = "[";
+    int n = WiFi.scanComplete();
+
+    if (n == -2) {
+      // Scan not triggered yet, start it
+      Serial.println("[SCAN] Starting WiFi network scan...");
+      WiFi.scanNetworks(true);
+      json += "]";
+      request->send(200, "application/json", json);
+    } else if (n == -1) {
+      // Scan in progress
+      Serial.println("[SCAN] Scan in progress...");
+      json += "]";
+      request->send(200, "application/json", json);
+    } else {
+      // Scan complete, return results
+      Serial.print("[SCAN] Scan complete! Found ");
+      Serial.print(n);
+      Serial.println(" networks:");
+
+      for (int i = 0; i < n; ++i) {
+        if (i) json += ",";
+        json += "{";
+        json += "\"rssi\":" + String(WiFi.RSSI(i));
+        json += ",\"ssid\":\"" + WiFi.SSID(i) + "\"";
+        json += ",\"bssid\":\"" + WiFi.BSSIDstr(i) + "\"";
+        json += ",\"channel\":" + String(WiFi.channel(i));
+        json += ",\"secure\":" + String(WiFi.encryptionType(i));
+        json += "}";
+
+        // Log each network found
+        Serial.print("  ");
+        Serial.print(i + 1);
+        Serial.print(". ");
+        Serial.print(WiFi.SSID(i));
+        Serial.print(" (");
+        Serial.print(WiFi.RSSI(i));
+        Serial.print(" dBm) ");
+        Serial.println(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "[Secured]" : "[Open]");
+      }
+
+      WiFi.scanDelete();
+      // Trigger next scan for next time
+      WiFi.scanNetworks(true);
+      json += "]";
+      request->send(200, "application/json", json);
+    }
+  });
+
   server.on("/save", HTTP_POST, [](AsyncWebServerRequest *request){
     if (request->hasParam("ssid", true) && request->hasParam("password", true)) {
-      ssid = request->getParam("ssid", true)->value();
-      password = request->getParam("password", true)->value();
+      String newSSID = request->getParam("ssid", true)->value();
+      String newPassword = request->getParam("password", true)->value();
 
       Serial.println("Received WiFi credentials:");
       Serial.print("SSID: ");
-      Serial.println(ssid);
+      Serial.println(newSSID);
 
-      // Save to preferences
-      preferences.begin("wifi", false);
-      preferences.putString("ssid", ssid);
-      preferences.putString("password", password);
-      preferences.end();
+      // Try to connect to the new WiFi first
+      Serial.println("Testing connection to new WiFi...");
+      WiFi.mode(WIFI_AP_STA); // Keep AP running while testing
+      WiFi.begin(newSSID.c_str(), newPassword.c_str());
 
-      request->send(200, "text/plain", "OK");
+      int attempts = 0;
+      bool connected = false;
+      while (attempts < 20 && !connected) {
+        delay(500);
+        Serial.print(".");
+        if (WiFi.status() == WL_CONNECTED) {
+          connected = true;
+          Serial.println("\nSuccessfully connected to new WiFi!");
+          Serial.print("IP address: ");
+          Serial.println(WiFi.localIP());
+        }
+        attempts++;
+      }
 
-      delay(1000);
-      ESP.restart();
+      if (connected) {
+        // Only save credentials if connection was successful
+        preferences.begin("wifi", false);
+        preferences.putString("ssid", newSSID);
+        preferences.putString("password", newPassword);
+        preferences.end();
+
+        request->send(200, "text/plain", "OK");
+        Serial.println("New credentials saved. Restarting...");
+        delay(1000);
+        ESP.restart();
+      } else {
+        // Connection failed, keep old credentials
+        Serial.println("\nFailed to connect to new WiFi. Keeping old credentials.");
+        WiFi.disconnect();
+        request->send(400, "text/plain", "Failed to connect to WiFi. Please check credentials and try again.");
+      }
     } else {
       request->send(400, "text/plain", "Missing parameters");
     }
