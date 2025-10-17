@@ -103,8 +103,8 @@ void setup() {
     wifiManager = new WiFiManager();
     wifiManager->begin();
 
-    // Initialize web server (pass wifiManager and isAPMode flag)
-    webServer = new WebServer(wifiManager, &isAPMode);
+    // Initialize web server (pass wifiManager, tempSensor, and isAPMode flag)
+    webServer = new WebServer(wifiManager, tempSensor, &isAPMode);
 
     // Check for factory reset button press
     checkFactoryReset();

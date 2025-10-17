@@ -16,39 +16,44 @@ const char index_html[] PROGMEM = R"rawliteral(
             display: flex;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
+            padding: 15px;
         }
         .container {
             background: white;
-            padding: 30px;
+            padding: 25px;
             border-radius: 10px;
             box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-            max-width: 400px;
-            width: 90%;
+            max-width: 450px;
+            width: 100%;
         }
         h1 {
             color: #333;
             text-align: center;
-            margin-bottom: 30px;
+            margin-bottom: 25px;
+            font-size: clamp(1.5rem, 5vw, 2rem);
         }
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 18px;
         }
         label {
             display: block;
-            margin-bottom: 5px;
+            margin-bottom: 6px;
             color: #555;
             font-weight: bold;
+            font-size: clamp(0.9rem, 3vw, 1rem);
         }
         input[type="text"], input[type="password"] {
             width: 100%;
-            padding: 10px;
+            padding: 12px;
             padding-right: 45px;
             border: 2px solid #ddd;
             border-radius: 5px;
             box-sizing: border-box;
             font-size: 16px;
+            -webkit-appearance: none;
+            appearance: none;
         }
         input[type="text"]:focus, input[type="password"]:focus {
             outline: none;
@@ -75,30 +80,37 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
         select {
             width: 100%;
-            padding: 10px;
+            padding: 12px;
             border: 2px solid #ddd;
             border-radius: 5px;
             box-sizing: border-box;
             font-size: 16px;
             background-color: white;
             cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 35px;
         }
         select:focus {
             outline: none;
             border-color: #667eea;
         }
         .refresh-btn {
-            margin-top: 5px;
-            padding: 8px 15px;
+            margin-top: 8px;
+            padding: 10px 18px;
             background: #f0f0f0;
             border: 1px solid #ddd;
             border-radius: 5px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: clamp(0.85rem, 3vw, 0.95rem);
             color: #555;
             width: auto;
+            touch-action: manipulation;
         }
-        .refresh-btn:hover {
+        .refresh-btn:hover, .refresh-btn:active {
             background: #e0e0e0;
             transform: none;
         }
@@ -193,15 +205,17 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
         button {
             width: 100%;
-            padding: 12px;
+            padding: 14px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
             border-radius: 5px;
-            font-size: 16px;
+            font-size: clamp(0.95rem, 3vw, 1.05rem);
             font-weight: bold;
             cursor: pointer;
             transition: transform 0.2s;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
         button:hover {
             transform: translateY(-2px);
@@ -211,11 +225,12 @@ const char index_html[] PROGMEM = R"rawliteral(
         }
         .info {
             background: #e7f3ff;
-            padding: 15px;
+            padding: 12px;
             border-radius: 5px;
             margin-bottom: 20px;
             text-align: center;
             color: #0066cc;
+            font-size: clamp(0.85rem, 3vw, 0.95rem);
         }
         .status {
             text-align: center;
@@ -223,6 +238,47 @@ const char index_html[] PROGMEM = R"rawliteral(
             color: #28a745;
             font-weight: bold;
             display: none;
+            font-size: clamp(0.9rem, 3vw, 1rem);
+        }
+
+        /* Mobile optimizations */
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+            .container {
+                padding: 20px;
+            }
+            h1 {
+                margin-bottom: 20px;
+            }
+            .form-group {
+                margin-bottom: 15px;
+            }
+            .saved-info {
+                padding: 12px;
+            }
+            .divider {
+                margin: 15px 0;
+            }
+        }
+
+        /* Landscape mobile */
+        @media (max-width: 900px) and (orientation: landscape) {
+            body {
+                padding: 10px;
+                align-items: flex-start;
+            }
+            .container {
+                margin: 10px 0;
+            }
+        }
+
+        /* Larger screens */
+        @media (min-width: 768px) {
+            .container {
+                padding: 30px;
+            }
         }
     </style>
 </head>
@@ -264,6 +320,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             <button type="submit">Save & Connect</button>
         </form>
         <div class="status" id="status"></div>
+        <div style="text-align: center; margin-top: 20px;">
+            <a href="/dashboard" style="display: inline-block; padding: 10px 20px; background: #f0f0f0; border-radius: 5px; text-decoration: none; color: #667eea; font-weight: bold;">📊 View Dashboard</a>
+        </div>
     </div>
     <script>
         function loadSavedInfo() {

@@ -1,11 +1,14 @@
+#include <Arduino.h>
+#include <WiFi.h>
 #include "webserver.h"
 #include "webserver_html.h"
+#include "dashboard_html.h"
 #include "config.h"
-#include <Arduino.h>
 
-WebServer::WebServer(WiFiManager* wifiMgr, bool* apMode) {
+WebServer::WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, bool* apMode) {
     server = new AsyncWebServer(80);
     wifiManager = wifiMgr;
+    tempSensor = tempSens;
     isAPMode = apMode;
 
     scanInProgress = false;
@@ -37,9 +40,25 @@ void WebServer::begin() {
 }
 
 void WebServer::setupRoutes() {
-    // Root route - serve HTML page
+    // Root route - serve WiFi configuration page
     server->on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         request->send(200, "text/html", index_html);
+    });
+
+    // Dashboard route - serve temperature/humidity page
+    server->on("/dashboard", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "text/html", dashboard_html);
+    });
+
+    // API endpoint for sensor data
+    server->on("/api/sensor", HTTP_GET, [this](AsyncWebServerRequest *request){
+        String json = "{";
+        json += "\"temperature\":" + String(tempSensor->getTemperature(), 2) + ",";
+        json += "\"humidity\":" + String(tempSensor->getHumidity(), 2) + ",";
+        json += "\"heatIndex\":" + String(tempSensor->getHeatIndex(), 2) + ",";
+        json += "\"valid\":" + String(tempSensor->isValid() ? "true" : "false");
+        json += "}";
+        request->send(200, "application/json", json);
     });
 
     // WiFi scan route

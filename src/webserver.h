@@ -1,13 +1,16 @@
-#ifndef WEBSERVER_H
-#define WEBSERVER_H
+#ifndef PPIOT_WEBSERVER_H
+#define PPIOT_WEBSERVER_H
 
+#include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include "wifi_manager.h"
+#include "temperature.h"
 
 class WebServer {
 private:
     AsyncWebServer* server;
     WiFiManager* wifiManager;
+    TemperatureSensor* tempSensor;
     bool* isAPMode;
 
     // Operation state variables
@@ -31,7 +34,7 @@ private:
     void setupRoutes();
 
 public:
-    WebServer(WiFiManager* wifiMgr, bool* apMode);
+    WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, bool* apMode);
     ~WebServer();
 
     void begin();
@@ -44,4 +47,4 @@ public:
     bool isRetryInProgress() const { return retryInProgress; }
 };
 
-#endif // WEBSERVER_H
+#endif // PPIOT_WEBSERVER_H
