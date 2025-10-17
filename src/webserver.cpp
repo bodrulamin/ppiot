@@ -397,9 +397,9 @@ void WebServer::handleCheckRequest() {
         checkInProgress = false;
 
         // Disconnect from test connection after a delay to ensure response is sent
-        delay(200);
+        delay(1000);
         WiFi.disconnect();
-        delay(100);
+        delay(1000);
 
         Serial.println("[CHECK] Disconnected from test WiFi");
     } else if (elapsed > 10000) {
