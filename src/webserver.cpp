@@ -148,19 +148,41 @@ void WebServer::setupRoutes() {
         retryRequest = request;
     });
 
-    // Info route - return saved credentials info
+    // Info route - return saved credentials info and connection status
     server->on("/info", HTTP_GET, [this](AsyncWebServerRequest *request){
         String savedSSID = "";
         String savedPassword = "";
         bool hasCredentials = wifiManager->loadSavedCredentials(savedSSID, savedPassword);
+        bool isConnected = (WiFi.status() == WL_CONNECTED);
+        String currentSSID = WiFi.SSID();
+        String ipAddress = WiFi.localIP().toString();
 
         String json = "{";
         json += "\"saved_ssid\":\"" + savedSSID + "\",";
-        json += "\"has_saved\":";
-        json += hasCredentials ? "true" : "false";
+        json += "\"has_saved\":" + String(hasCredentials ? "true" : "false") + ",";
+        json += "\"connected\":" + String(isConnected ? "true" : "false") + ",";
+        json += "\"current_ssid\":\"" + currentSSID + "\",";
+        json += "\"ip_address\":\"" + ipAddress + "\"";
         json += "}";
 
         request->send(200, "application/json", json);
+    });
+
+    // Disconnect from WiFi
+    server->on("/disconnect", HTTP_GET, [this](AsyncWebServerRequest *request){
+        Serial.println("[DISCONNECT] Disconnecting from WiFi...");
+        WiFi.disconnect();
+        *isAPMode = true;
+        request->send(200, "text/plain", "Disconnected from WiFi");
+    });
+
+    // Clear saved credentials
+    server->on("/clear", HTTP_GET, [this](AsyncWebServerRequest *request){
+        Serial.println("[CLEAR] Clearing saved WiFi credentials...");
+        wifiManager->clearCredentials();
+        WiFi.disconnect();
+        *isAPMode = true;
+        request->send(200, "text/plain", "Credentials cleared");
     });
 
     // Check connection route

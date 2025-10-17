@@ -240,6 +240,56 @@ const char index_html[] PROGMEM = R"rawliteral(
             display: none;
             font-size: clamp(0.9rem, 3vw, 1rem);
         }
+        .connected-info {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .connected-info h3 {
+            color: #155724;
+            margin-bottom: 15px;
+            font-size: clamp(1.1rem, 4vw, 1.3rem);
+            text-align: center;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 8px;
+            background: white;
+            border-radius: 5px;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #155724;
+        }
+        .info-value {
+            color: #333;
+            font-family: monospace;
+        }
+        .action-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        .disconnect-btn {
+            background: #ffc107;
+            color: #000;
+        }
+        .disconnect-btn:hover {
+            background: #e0a800;
+        }
+        .clear-btn {
+            background: #dc3545;
+            color: white;
+        }
+        .clear-btn:hover {
+            background: #c82333;
+        }
 
         /* Mobile optimizations */
         @media (max-width: 600px) {
@@ -289,6 +339,26 @@ const char index_html[] PROGMEM = R"rawliteral(
             Enter your WiFi credentials to connect this device to your network
         </div>
 
+        <div id="connectedInfo" class="connected-info" style="display:none;">
+            <h3>✅ WiFi Connected</h3>
+            <div class="info-row">
+                <span class="info-label">Network:</span>
+                <span class="info-value" id="connectedSSID"></span>
+            </div>
+            <div class="info-row">
+                <span class="info-label">IP Address:</span>
+                <span class="info-value" id="ipAddress"></span>
+            </div>
+            <div class="action-buttons">
+                <button type="button" class="disconnect-btn" onclick="disconnectWiFi()">
+                    🔌 Disconnect
+                </button>
+                <button type="button" class="clear-btn" onclick="clearCredentials()">
+                    🗑️ Clear Credentials
+                </button>
+            </div>
+        </div>
+
         <div id="savedCredentials" style="display:none;">
             <div class="saved-info">
                 <strong>Saved WiFi Configuration</strong>
@@ -331,10 +401,62 @@ const char index_html[] PROGMEM = R"rawliteral(
             xhr.onload = function() {
                 if (xhr.status === 200) {
                     var info = JSON.parse(xhr.responseText);
-                    if (info.has_saved) {
+
+                    // Check if connected
+                    if (info.connected) {
+                        // Show connected info
+                        document.getElementById('connectedInfo').style.display = 'block';
+                        document.getElementById('connectedSSID').textContent = info.current_ssid;
+                        document.getElementById('ipAddress').textContent = info.ip_address;
+
+                        // Hide saved credentials retry section
+                        document.getElementById('savedCredentials').style.display = 'none';
+                    } else if (info.has_saved) {
+                        // Not connected but has saved credentials - show retry
                         document.getElementById('savedCredentials').style.display = 'block';
                         document.getElementById('savedSSID').textContent = info.saved_ssid;
+                        document.getElementById('connectedInfo').style.display = 'none';
+                    } else {
+                        // No connection and no saved credentials
+                        document.getElementById('connectedInfo').style.display = 'none';
+                        document.getElementById('savedCredentials').style.display = 'none';
                     }
+                }
+            };
+            xhr.send();
+        }
+
+        function disconnectWiFi() {
+            if (!confirm('Are you sure you want to disconnect from WiFi?')) {
+                return;
+            }
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/disconnect', true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    alert('Disconnected from WiFi');
+                    location.reload();
+                } else {
+                    alert('Failed to disconnect');
+                }
+            };
+            xhr.send();
+        }
+
+        function clearCredentials() {
+            if (!confirm('Are you sure you want to clear saved WiFi credentials? This will disconnect the device.')) {
+                return;
+            }
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/clear', true);
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    alert('Credentials cleared successfully');
+                    location.reload();
+                } else {
+                    alert('Failed to clear credentials');
                 }
             };
             xhr.send();
