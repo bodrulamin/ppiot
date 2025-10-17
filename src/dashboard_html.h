@@ -120,7 +120,9 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
             margin-top: 20px;
         }
         .refresh-btn {
-            display: block;
+            display: flex; /* Use flex to align content */
+            align-items: center; /* Vertically center content */
+            justify-content: center; /* Horizontally center content */
             margin: 20px auto 0;
             padding: 12px 30px;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -141,25 +143,24 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
         .refresh-btn:active {
             transform: scale(0.95);
         }
-        .loading {
-            display: none;
-            text-align: center;
-            color: #667eea;
-            margin: 20px 0;
-        }
-        .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
+        
+        /* New loading indicator style */
+        .loading-icon {
+            display: none; /* Hidden by default */
+            margin-left: 10px;
+            width: 1em; /* Set width relative to font size */
+            height: 1em; /* Set height relative to font size */
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            border-top: 2px solid white;
             border-radius: 50%;
-            width: 40px;
-            height: 40px;
             animation: spin 1s linear infinite;
-            margin: 0 auto;
         }
+
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
         .nav-link {
             display: block;
             text-align: center;
@@ -245,16 +246,14 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
-        <div class="loading" id="loading">
-            <div class="spinner"></div>
-            <p>Loading...</p>
-        </div>
-
         <div class="last-update" id="lastUpdate">
             Last updated: Never
         </div>
 
-        <button class="refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
+        <button class="refresh-btn" onclick="refreshData()">
+            <span id="refreshText">🔄 Refresh Data</span>
+            <div id="loadingIcon" class="loading-icon"></div>
+        </button>
 
         <div class="nav-links" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 20px;">
             <a href="/" class="nav-link">⚙️ WiFi Config</a>
@@ -281,7 +280,8 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
                 status.textContent = '📡 Sensor Online';
 
                 const now = new Date();
-                lastUpdate.textContent = 'Last updated: ' + now.toLocaleTimeString();
+                // User has a timezone preference of Asia/Dhaka, so we'll display the local time for Dhaka.
+                lastUpdate.textContent = 'Last updated: ' + now.toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
             } else {
                 tempElement.textContent = '--';
                 humidityElement.textContent = '--';
@@ -295,21 +295,30 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
         }
 
         function refreshData() {
-            const loading = document.getElementById('loading');
-            loading.style.display = 'block';
+            const refreshButton = document.querySelector('.refresh-btn');
+            const refreshText = document.getElementById('refreshText');
+            const loadingIcon = document.getElementById('loadingIcon');
+
+            // 1. Show Loading State
+            refreshButton.disabled = true; // Prevent multiple clicks
+            loadingIcon.style.display = 'block';
 
             fetch('/api/sensor')
                 .then(response => response.json())
                 .then(data => {
-                    loading.style.display = 'none';
                     updateData(data);
                 })
                 .catch(error => {
-                    loading.style.display = 'none';
                     console.error('Error fetching data:', error);
                     const status = document.getElementById('status');
                     status.className = 'status offline';
                     status.textContent = '❌ Connection Error';
+                })
+                .finally(() => {
+                    // 2. Hide Loading State regardless of success or failure
+                    refreshButton.disabled = false;
+                    loadingIcon.style.display = 'none';
+                    refreshText.textContent = '🔄 Refresh Data';
                 });
         }
 
