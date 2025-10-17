@@ -256,7 +256,10 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
 
         <button class="refresh-btn" onclick="refreshData()">🔄 Refresh Data</button>
 
-        <a href="/" class="nav-link">⚙️ WiFi Configuration</a>
+        <div class="nav-links" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 20px;">
+            <a href="/" class="nav-link">⚙️ WiFi Config</a>
+            <a href="/device" class="nav-link">🖥️ Device Info</a>
+        </div>
     </div>
 
     <script>

@@ -1,8 +1,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <esp_chip_info.h>
+#include <esp_system.h>
 #include "webserver.h"
 #include "webserver_html.h"
 #include "dashboard_html.h"
+#include "deviceinfo_html.h"
 #include "config.h"
 
 WebServer::WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, bool* apMode) {
@@ -50,6 +53,11 @@ void WebServer::setupRoutes() {
         request->send(200, "text/html", dashboard_html);
     });
 
+    // Device info route - serve device information page
+    server->on("/device", HTTP_GET, [](AsyncWebServerRequest *request){
+        request->send(200, "text/html", deviceinfo_html);
+    });
+
     // API endpoint for sensor data
     server->on("/api/sensor", HTTP_GET, [this](AsyncWebServerRequest *request){
         String json = "{";
@@ -58,6 +66,89 @@ void WebServer::setupRoutes() {
         json += "\"heatIndex\":" + String(tempSensor->getHeatIndex(), 2) + ",";
         json += "\"valid\":" + String(tempSensor->isValid() ? "true" : "false");
         json += "}";
+        request->send(200, "application/json", json);
+    });
+
+    // API endpoint for device information
+    server->on("/api/device", HTTP_GET, [](AsyncWebServerRequest *request){
+        esp_chip_info_t chip_info;
+        esp_chip_info(&chip_info);
+
+        // System info
+        String chipModel = "ESP32";
+        uint8_t cpuCores = chip_info.cores;
+        uint32_t cpuFreq = ESP.getCpuFreqMHz();
+        String sdkVersion = String(ESP.getSdkVersion());
+
+        // RAM info
+        uint32_t totalRam = ESP.getHeapSize();
+        uint32_t freeRam = ESP.getFreeHeap();
+        uint32_t usedRam = totalRam - freeRam;
+        uint32_t largestBlock = ESP.getMaxAllocHeap();
+
+        // Flash info
+        uint32_t flashSize = ESP.getFlashChipSize();
+        uint32_t flashSpeed = ESP.getFlashChipSpeed();
+        uint32_t sketchSize = ESP.getSketchSize();
+        String flashMode;
+        switch(ESP.getFlashChipMode()) {
+            case FM_QIO:  flashMode = "QIO"; break;
+            case FM_QOUT: flashMode = "QOUT"; break;
+            case FM_DIO:  flashMode = "DIO"; break;
+            case FM_DOUT: flashMode = "DOUT"; break;
+            default:      flashMode = "UNKNOWN"; break;
+        }
+
+        // WiFi info
+        bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+        String wifiSSID = WiFi.SSID();
+        String ipAddress = WiFi.localIP().toString();
+        String macAddress = WiFi.macAddress();
+        int32_t rssi = WiFi.RSSI();
+        String gateway = WiFi.gatewayIP().toString();
+
+        // Runtime info
+        uint32_t uptime = millis();
+        String resetReason;
+        switch(esp_reset_reason()) {
+            case ESP_RST_POWERON:   resetReason = "Power On"; break;
+            case ESP_RST_SW:        resetReason = "Software Reset"; break;
+            case ESP_RST_PANIC:     resetReason = "Panic/Exception"; break;
+            case ESP_RST_INT_WDT:   resetReason = "Interrupt Watchdog"; break;
+            case ESP_RST_TASK_WDT:  resetReason = "Task Watchdog"; break;
+            case ESP_RST_WDT:       resetReason = "Watchdog"; break;
+            case ESP_RST_DEEPSLEEP: resetReason = "Deep Sleep"; break;
+            case ESP_RST_BROWNOUT:  resetReason = "Brownout"; break;
+            default:                resetReason = "Unknown"; break;
+        }
+
+        String json = "{";
+        json += "\"chip_model\":\"" + chipModel + "\",";
+        json += "\"cpu_cores\":" + String(cpuCores) + ",";
+        json += "\"cpu_freq\":" + String(cpuFreq) + ",";
+        json += "\"sdk_version\":\"" + sdkVersion + "\",";
+
+        json += "\"total_ram\":" + String(totalRam) + ",";
+        json += "\"free_ram\":" + String(freeRam) + ",";
+        json += "\"used_ram\":" + String(usedRam) + ",";
+        json += "\"largest_block\":" + String(largestBlock) + ",";
+
+        json += "\"flash_size\":" + String(flashSize) + ",";
+        json += "\"flash_speed\":" + String(flashSpeed) + ",";
+        json += "\"flash_mode\":\"" + flashMode + "\",";
+        json += "\"sketch_size\":" + String(sketchSize) + ",";
+
+        json += "\"wifi_connected\":" + String(wifiConnected ? "true" : "false") + ",";
+        json += "\"wifi_ssid\":\"" + wifiSSID + "\",";
+        json += "\"ip_address\":\"" + ipAddress + "\",";
+        json += "\"mac_address\":\"" + macAddress + "\",";
+        json += "\"rssi\":" + String(rssi) + ",";
+        json += "\"gateway\":\"" + gateway + "\",";
+
+        json += "\"uptime\":" + String(uptime) + ",";
+        json += "\"reset_reason\":\"" + resetReason + "\"";
+        json += "}";
+
         request->send(200, "application/json", json);
     });
 

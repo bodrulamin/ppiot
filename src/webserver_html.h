@@ -390,8 +390,9 @@ const char index_html[] PROGMEM = R"rawliteral(
             <button type="submit">Save & Connect</button>
         </form>
         <div class="status" id="status"></div>
-        <div style="text-align: center; margin-top: 20px;">
-            <a href="/dashboard" style="display: inline-block; padding: 10px 20px; background: #f0f0f0; border-radius: 5px; text-decoration: none; color: #667eea; font-weight: bold;">📊 View Dashboard</a>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-top: 20px;">
+            <a href="/dashboard" style="display: block; padding: 10px; background: #f0f0f0; border-radius: 5px; text-decoration: none; color: #667eea; font-weight: bold; text-align: center;">📊 Dashboard</a>
+            <a href="/device" style="display: block; padding: 10px; background: #f0f0f0; border-radius: 5px; text-decoration: none; color: #667eea; font-weight: bold; text-align: center;">🖥️ Device Info</a>
         </div>
     </div>
     <script>
