@@ -11,6 +11,7 @@ private:
     AsyncWebServer* server;
     WiFiManager* wifiManager;
     TemperatureSensor* tempSensor;
+    DS18B20Sensor* ds18b20Sensor;
     bool* isAPMode;
 
     // Operation state variables
@@ -34,7 +35,7 @@ private:
     void setupRoutes();
 
 public:
-    WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, bool* apMode);
+    WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, DS18B20Sensor* ds18b20Sens, bool* apMode);
     ~WebServer();
 
     void begin();

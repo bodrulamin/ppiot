@@ -7,6 +7,7 @@
 
 // Global objects
 TemperatureSensor* tempSensor = nullptr;
+DS18B20Sensor* ds18b20Sensor = nullptr;
 WiFiManager* wifiManager = nullptr;
 WebServer* webServer = nullptr;
 
@@ -95,16 +96,19 @@ void setup() {
     delay(1000);
     Serial.println("\n\n=== PPIOT Device Starting ===");
 
-    // Initialize temperature sensor
+    // Initialize temperature sensors
     tempSensor = new TemperatureSensor(TEMP_SENSOR_PIN);
     tempSensor->begin();
+
+    ds18b20Sensor = new DS18B20Sensor(DS18B20_PIN);
+    ds18b20Sensor->begin();
 
     // Initialize WiFi manager
     wifiManager = new WiFiManager();
     wifiManager->begin();
 
-    // Initialize web server (pass wifiManager, tempSensor, and isAPMode flag)
-    webServer = new WebServer(wifiManager, tempSensor, &isAPMode);
+    // Initialize web server (pass wifiManager, tempSensor, ds18b20Sensor, and isAPMode flag)
+    webServer = new WebServer(wifiManager, tempSensor, ds18b20Sensor, &isAPMode);
 
     // Check for factory reset button press
     checkFactoryReset();
@@ -183,6 +187,7 @@ void loop() {
     unsigned long currentMillis = millis();
     if (currentMillis - lastTempRead >= TEMP_READ_INTERVAL) {
         lastTempRead = currentMillis;
-        tempSensor->readTemperature();  // Comment this line to disable temperature reading
+        tempSensor->readTemperature();  // DHT22 sensor
+        ds18b20Sensor->readTemperature();  // DS18B20 sensor
     }
 }

@@ -5,6 +5,7 @@
 constexpr int LED_PIN = 2;
 constexpr int RESET_BUTTON_PIN = 0; // GPIO 0 - Usually the BOOT button on ESP32
 constexpr int TEMP_SENSOR_PIN = 4; // DHT22 temperature & humidity sensor pin
+constexpr int DS18B20_PIN = 15; // DS18B20 temperature sensor pin
 
 // Timing constants
 constexpr unsigned long RESET_HOLD_TIME = 5000; // 5 seconds in milliseconds

@@ -219,14 +219,14 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
         <h1>🌡️ PPIOT Dashboard</h1>
         <p class="subtitle">Real-time Temperature & Humidity Monitor</p>
 
-        <div id="status" class="status online">
-            📡 Sensor Online
+        <div id="statusDHT22" class="status online">
+            📡 DHT22 Sensor Online
         </div>
 
         <div class="cards">
             <div class="card">
                 <div class="card-icon">🌡️</div>
-                <div class="card-label">Temperature</div>
+                <div class="card-label">Temperature (DHT22)</div>
                 <div class="card-value" id="temperature">--</div>
                 <div class="card-unit">°C</div>
             </div>
@@ -242,6 +242,19 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
                 <div class="card-icon">🔥</div>
                 <div class="card-label">Heat Index</div>
                 <div class="card-value" id="heatIndex">--</div>
+                <div class="card-unit">°C</div>
+            </div>
+        </div>
+
+        <div id="statusDS18B20" class="status online" style="margin-top: 20px;">
+            📡 DS18B20 Sensor Online
+        </div>
+
+        <div class="cards">
+            <div class="card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="card-icon">🌡️</div>
+                <div class="card-label">Temperature (DS18B20)</div>
+                <div class="card-value" id="temperatureDS18B20">--</div>
                 <div class="card-unit">°C</div>
             </div>
         </div>
@@ -265,33 +278,47 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
         let autoRefreshInterval;
 
         function updateData(data) {
-            const status = document.getElementById('status');
+            const statusDHT22 = document.getElementById('statusDHT22');
+            const statusDS18B20 = document.getElementById('statusDS18B20');
             const tempElement = document.getElementById('temperature');
             const humidityElement = document.getElementById('humidity');
             const heatIndexElement = document.getElementById('heatIndex');
+            const tempDS18B20Element = document.getElementById('temperatureDS18B20');
             const lastUpdate = document.getElementById('lastUpdate');
 
-            if (data.valid) {
-                tempElement.textContent = data.temperature.toFixed(1);
-                humidityElement.textContent = data.humidity.toFixed(1);
-                heatIndexElement.textContent = data.heatIndex.toFixed(1);
+            // Update DHT22 data
+            if (data.dht22 && data.dht22.valid) {
+                tempElement.textContent = data.dht22.temperature.toFixed(1);
+                humidityElement.textContent = data.dht22.humidity.toFixed(1);
+                heatIndexElement.textContent = data.dht22.heatIndex.toFixed(1);
 
-                status.className = 'status online';
-                status.textContent = '📡 Sensor Online';
-
-                const now = new Date();
-                // User has a timezone preference of Asia/Dhaka, so we'll display the local time for Dhaka.
-                lastUpdate.textContent = 'Last updated: ' + now.toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
+                statusDHT22.className = 'status online';
+                statusDHT22.textContent = '📡 DHT22 Sensor Online';
             } else {
                 tempElement.textContent = '--';
                 humidityElement.textContent = '--';
                 heatIndexElement.textContent = '--';
 
-                status.className = 'status offline';
-                status.textContent = '⚠️ Sensor Offline';
-
-                lastUpdate.textContent = 'Sensor not responding';
+                statusDHT22.className = 'status offline';
+                statusDHT22.textContent = '⚠️ DHT22 Sensor Offline';
             }
+
+            // Update DS18B20 data
+            if (data.ds18b20 && data.ds18b20.valid) {
+                tempDS18B20Element.textContent = data.ds18b20.temperature.toFixed(1);
+
+                statusDS18B20.className = 'status online';
+                statusDS18B20.textContent = '📡 DS18B20 Sensor Online';
+            } else {
+                tempDS18B20Element.textContent = '--';
+
+                statusDS18B20.className = 'status offline';
+                statusDS18B20.textContent = '⚠️ DS18B20 Sensor Offline';
+            }
+
+            // Update last update time
+            const now = new Date();
+            lastUpdate.textContent = 'Last updated: ' + now.toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
         }
 
         function refreshData() {
@@ -310,9 +337,12 @@ const char dashboard_html[] PROGMEM = R"rawliteral(
                 })
                 .catch(error => {
                     console.error('Error fetching data:', error);
-                    const status = document.getElementById('status');
-                    status.className = 'status offline';
-                    status.textContent = '❌ Connection Error';
+                    const statusDHT22 = document.getElementById('statusDHT22');
+                    const statusDS18B20 = document.getElementById('statusDS18B20');
+                    statusDHT22.className = 'status offline';
+                    statusDHT22.textContent = '❌ Connection Error';
+                    statusDS18B20.className = 'status offline';
+                    statusDS18B20.textContent = '❌ Connection Error';
                 })
                 .finally(() => {
                     // 2. Hide Loading State regardless of success or failure
