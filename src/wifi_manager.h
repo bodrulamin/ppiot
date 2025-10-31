@@ -26,6 +26,8 @@ public:
 
     bool connectToWiFi();
     void handleAutoReconnect();
+    void switchToSTAMode();
+    void switchToAPMode();
 
     String getSSID() const { return ssid; }
     String getPassword() const { return password; }

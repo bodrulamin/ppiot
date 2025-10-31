@@ -87,6 +87,14 @@ bool WiFiManager::connectToWiFi() {
     Serial.print("SSID: ");
     Serial.println(ssid);
 
+    // If currently in AP mode only, switch to AP+STA mode to allow connection
+    wifi_mode_t currentMode = WiFi.getMode();
+    if (currentMode == WIFI_AP) {
+        Serial.println("Switching to AP+STA mode for connection attempt...");
+        WiFi.mode(WIFI_AP_STA);
+        delay(100); // Give some time for mode switch
+    }
+
     WiFi.begin(ssid.c_str(), password.c_str());
 
     int attempts = 0;
@@ -103,6 +111,10 @@ bool WiFiManager::connectToWiFi() {
         return true;
     } else {
         Serial.println("\nFailed to connect to WiFi");
+        // If connection failed and we were in AP mode, switch back to AP only
+        if (currentMode == WIFI_AP) {
+            WiFi.mode(WIFI_AP);
+        }
         return false;
     }
 }
@@ -159,6 +171,14 @@ void WiFiManager::handleAutoReconnect() {
                     Serial.print("[AUTO-RECONNECT] Connecting to: ");
                     Serial.println(savedSSID);
 
+                    // If in AP mode only, switch to AP+STA mode for reconnection
+                    wifi_mode_t currentMode = WiFi.getMode();
+                    if (currentMode == WIFI_AP) {
+                        Serial.println("[AUTO-RECONNECT] Switching to AP+STA mode...");
+                        WiFi.mode(WIFI_AP_STA);
+                        delay(100);
+                    }
+
                     // Disconnect first to clear any stuck state
                     WiFi.disconnect(true);
                     delay(100);
@@ -180,6 +200,14 @@ void WiFiManager::handleAutoReconnect() {
                     String savedPassword = "";
 
                     if (loadSavedCredentials(savedSSID, savedPassword)) {
+                        // If in AP mode only, switch to AP+STA mode for reconnection
+                        wifi_mode_t currentMode = WiFi.getMode();
+                        if (currentMode == WIFI_AP) {
+                            Serial.println("[AUTO-RECONNECT] Switching to AP+STA mode...");
+                            WiFi.mode(WIFI_AP_STA);
+                            delay(100);
+                        }
+
                         // Force disconnect and try again
                         WiFi.disconnect(true);
                         delay(100);
@@ -205,6 +233,41 @@ void WiFiManager::handleAutoReconnect() {
             }
         }
     }
+}
+
+void WiFiManager::switchToSTAMode() {
+    Serial.println("[MODE] Switching from AP mode to STA mode...");
+
+    // Stop the Access Point
+    WiFi.softAPdisconnect(true);
+
+    // Switch to Station mode only
+    WiFi.mode(WIFI_STA);
+
+    Serial.println("[MODE] Successfully switched to STA mode");
+    Serial.print("[MODE] IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+void WiFiManager::switchToAPMode() {
+    Serial.println("[MODE] Switching from STA mode to AP mode...");
+
+    // Disconnect from WiFi if connected
+    WiFi.disconnect(true);
+    delay(100);
+
+    // Switch to AP mode and restart the AP
+    WiFi.mode(WIFI_AP);
+
+    String apSSID = "ppiot-" + getMacLastDigits();
+    WiFi.softAP(apSSID.c_str(), AP_PASSWORD);
+
+    IPAddress IP = WiFi.softAPIP();
+    Serial.println("[MODE] Successfully switched to AP mode");
+    Serial.print("[MODE] AP SSID: ");
+    Serial.println(apSSID);
+    Serial.print("[MODE] AP IP address: ");
+    Serial.println(IP);
 }
 
 String WiFiManager::getMacLastDigits() {

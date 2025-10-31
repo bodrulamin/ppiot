@@ -238,6 +238,14 @@ void WebServer::setupRoutes() {
         Serial.print("[RETRY] SSID: ");
         Serial.println(savedSSID);
 
+        // If in AP mode only, switch to AP+STA mode for connection
+        wifi_mode_t currentMode = WiFi.getMode();
+        if (currentMode == WIFI_AP) {
+            Serial.println("[RETRY] Switching to AP+STA mode...");
+            WiFi.mode(WIFI_AP_STA);
+            delay(100);
+        }
+
         // Start connection attempt
         WiFi.begin(savedSSID.c_str(), savedPassword.c_str());
 
@@ -269,7 +277,7 @@ void WebServer::setupRoutes() {
     // Disconnect from WiFi
     server->on("/disconnect", HTTP_GET, [this](AsyncWebServerRequest *request){
         Serial.println("[DISCONNECT] Disconnecting from WiFi...");
-        WiFi.disconnect();
+        wifiManager->switchToAPMode();
         *isAPMode = true;
         request->send(200, "text/plain", "Disconnected from WiFi");
     });
@@ -278,7 +286,7 @@ void WebServer::setupRoutes() {
     server->on("/clear", HTTP_GET, [this](AsyncWebServerRequest *request){
         Serial.println("[CLEAR] Clearing saved WiFi credentials...");
         wifiManager->clearCredentials();
-        WiFi.disconnect();
+        wifiManager->switchToAPMode();
         *isAPMode = true;
         request->send(200, "text/plain", "Credentials cleared");
     });
@@ -302,6 +310,14 @@ void WebServer::setupRoutes() {
             Serial.println("[CHECK] Testing WiFi credentials:");
             Serial.print("[CHECK] SSID: ");
             Serial.println(checkSSID);
+
+            // If in AP mode only, switch to AP+STA mode for connection test
+            wifi_mode_t currentMode = WiFi.getMode();
+            if (currentMode == WIFI_AP) {
+                Serial.println("[CHECK] Switching to AP+STA mode...");
+                WiFi.mode(WIFI_AP_STA);
+                delay(100);
+            }
 
             // Start connection test
             WiFi.begin(checkSSID.c_str(), checkPassword.c_str());
@@ -328,6 +344,14 @@ void WebServer::setupRoutes() {
             Serial.println("Received WiFi credentials:");
             Serial.print("SSID: ");
             Serial.println(newSSID);
+
+            // If in AP mode only, switch to AP+STA mode for connection
+            wifi_mode_t currentMode = WiFi.getMode();
+            if (currentMode == WIFI_AP) {
+                Serial.println("[SAVE] Switching to AP+STA mode...");
+                WiFi.mode(WIFI_AP_STA);
+                delay(100);
+            }
 
             // Try to connect to the new WiFi
             Serial.println("Testing connection to new WiFi...");
@@ -365,14 +389,20 @@ void WebServer::handleSaveRequest() {
         saveInProgress = false;
 
         Serial.println("New credentials saved and connected successfully!");
-        Serial.println("Device is now connected to WiFi. AP still running in background.");
 
-        // Switch to connected mode
+        // Switch from AP mode to STA mode
+        wifiManager->switchToSTAMode();
         *isAPMode = false;
     } else if (elapsed > 10000) {
         // Timeout after 10 seconds
         Serial.println("\nFailed to connect to new WiFi. Keeping old credentials.");
         WiFi.disconnect();
+
+        // If currently in AP+STA mode, switch back to AP only mode
+        if (WiFi.getMode() == WIFI_AP_STA) {
+            WiFi.mode(WIFI_AP);
+            Serial.println("Switched back to AP only mode after connection failure");
+        }
 
         // Send failure response
         saveRequest->send(400, "text/plain", "Failed to connect. Please check credentials.");
@@ -408,6 +438,12 @@ void WebServer::handleCheckRequest() {
         WiFi.disconnect();
         delay(1000);
 
+        // If currently in AP+STA mode, switch back to AP only mode
+        if (WiFi.getMode() == WIFI_AP_STA) {
+            WiFi.mode(WIFI_AP);
+            Serial.println("[CHECK] Switched back to AP only mode");
+        }
+
         Serial.println("[CHECK] Disconnected from test WiFi");
     } else if (elapsed > 10000) {
         // Timeout after 10 seconds
@@ -423,6 +459,12 @@ void WebServer::handleCheckRequest() {
 
         // Disconnect from failed attempt
         WiFi.disconnect();
+
+        // If currently in AP+STA mode, switch back to AP only mode
+        if (WiFi.getMode() == WIFI_AP_STA) {
+            WiFi.mode(WIFI_AP);
+            Serial.println("[CHECK] Switched back to AP only mode after failure");
+        }
     }
 }
 
@@ -445,14 +487,19 @@ void WebServer::handleRetryRequest() {
         retryRequest = nullptr;
         retryInProgress = false;
 
-        Serial.println("[RETRY] Device is now connected to WiFi. AP still running in background.");
-
-        // Switch to connected mode
+        // Switch from AP mode to STA mode
+        wifiManager->switchToSTAMode();
         *isAPMode = false;
     } else if (elapsed > 10000) {
         // Timeout after 10 seconds
         Serial.println("\n[RETRY] Failed to reconnect - timeout");
         WiFi.disconnect();
+
+        // If currently in AP+STA mode, switch back to AP only mode
+        if (WiFi.getMode() == WIFI_AP_STA) {
+            WiFi.mode(WIFI_AP);
+            Serial.println("[RETRY] Switched back to AP only mode after failure");
+        }
 
         retryRequest->send(400, "text/plain", "Failed to connect. WiFi may be down or password changed.");
         retryRequest = nullptr;

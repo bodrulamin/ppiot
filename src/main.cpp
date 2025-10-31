@@ -77,8 +77,8 @@ void startAPMode() {
     Serial.print("AP Password: ");
     Serial.println(AP_PASSWORD);
 
-    WiFi.mode(WIFI_AP_STA); // Always use AP+STA mode
-    WiFi.softAP(apSSID.c_str(), AP_PASSWORD); // Always visible
+    WiFi.mode(WIFI_AP); // Start in AP mode only
+    WiFi.softAP(apSSID.c_str(), AP_PASSWORD);
 
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
@@ -127,8 +127,9 @@ void setup() {
         startAPMode();
 
         if (wifiManager->connectToWiFi()) {
+            // Successfully connected - switch from AP mode to STA mode
+            wifiManager->switchToSTAMode();
             isAPMode = false;
-            Serial.println("Device connected to WiFi - AP running in background");
         } else {
             Serial.println("Failed to connect to saved WiFi");
             Serial.println("AP visible for configuration, continuously trying to reconnect...");
@@ -163,9 +164,10 @@ void loop() {
     if (!webServer->isRetryInProgress()) {
         wifiManager->handleAutoReconnect();
 
-        // Update isAPMode flag based on reconnection status
+        // Update mode based on reconnection status
         if (wifiManager->isAutoReconnecting() && WiFi.status() == WL_CONNECTED && isAPMode) {
-            Serial.println("[AUTO-RECONNECT] Connected! AP still running in background");
+            Serial.println("[AUTO-RECONNECT] Connected! Switching to STA mode...");
+            wifiManager->switchToSTAMode();
             isAPMode = false;
         }
     }
