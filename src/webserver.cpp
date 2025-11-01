@@ -8,10 +8,11 @@
 #include "deviceinfo_html.h"
 #include "config.h"
 
-WebServer::WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, bool* apMode) {
+WebServer::WebServer(WiFiManager* wifiMgr, TemperatureSensor* tempSens, DS18B20Sensor* ds18b20Sens, bool* apMode) {
     server = new AsyncWebServer(80);
     wifiManager = wifiMgr;
     tempSensor = tempSens;
+    ds18b20Sensor = ds18b20Sens;
     isAPMode = apMode;
 
     scanInProgress = false;
@@ -61,10 +62,16 @@ void WebServer::setupRoutes() {
     // API endpoint for sensor data
     server->on("/api/sensor", HTTP_GET, [this](AsyncWebServerRequest *request){
         String json = "{";
+        json += "\"dht22\":{";
         json += "\"temperature\":" + String(tempSensor->getTemperature(), 2) + ",";
         json += "\"humidity\":" + String(tempSensor->getHumidity(), 2) + ",";
         json += "\"heatIndex\":" + String(tempSensor->getHeatIndex(), 2) + ",";
         json += "\"valid\":" + String(tempSensor->isValid() ? "true" : "false");
+        json += "},";
+        json += "\"ds18b20\":{";
+        json += "\"temperature\":" + String(ds18b20Sensor->getTemperature(), 2) + ",";
+        json += "\"valid\":" + String(ds18b20Sensor->isValid() ? "true" : "false");
+        json += "}";
         json += "}";
         request->send(200, "application/json", json);
     });

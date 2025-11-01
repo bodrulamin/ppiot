@@ -4,11 +4,14 @@
 #include "temperature.h"
 #include "wifi_manager.h"
 #include "webserver.h"
+#include "mqtt.h"
 
 // Global objects
 TemperatureSensor* tempSensor = nullptr;
+DS18B20Sensor* ds18b20Sensor = nullptr;
 WiFiManager* wifiManager = nullptr;
 WebServer* webServer = nullptr;
+MQTTManager* mqttManager = nullptr;
 
 // State variables
 bool isAPMode = false;
@@ -21,6 +24,9 @@ bool ledState = false;
 
 // Temperature reading variables
 unsigned long lastTempRead = 0;
+
+// MQTT publish variables
+unsigned long lastMQTTPublish = 0;
 
 // Function to handle factory reset
 void checkFactoryReset() {
@@ -95,16 +101,23 @@ void setup() {
     delay(1000);
     Serial.println("\n\n=== PPIOT Device Starting ===");
 
-    // Initialize temperature sensor
+    // Initialize temperature sensors
     tempSensor = new TemperatureSensor(TEMP_SENSOR_PIN);
     tempSensor->begin();
+
+    ds18b20Sensor = new DS18B20Sensor(DS18B20_PIN);
+    ds18b20Sensor->begin();
 
     // Initialize WiFi manager
     wifiManager = new WiFiManager();
     wifiManager->begin();
 
-    // Initialize web server (pass wifiManager, tempSensor, and isAPMode flag)
-    webServer = new WebServer(wifiManager, tempSensor, &isAPMode);
+    // Initialize web server (pass wifiManager, tempSensor, ds18b20Sensor, and isAPMode flag)
+    webServer = new WebServer(wifiManager, tempSensor, ds18b20Sensor, &isAPMode);
+
+    // Initialize MQTT manager
+    mqttManager = new MQTTManager(MQTT_SERVER, MQTT_PORT, MQTT_USER, MQTT_PASSWORD);
+    mqttManager->begin(tempSensor, ds18b20Sensor);
 
     // Check for factory reset button press
     checkFactoryReset();
@@ -183,6 +196,20 @@ void loop() {
     unsigned long currentMillis = millis();
     if (currentMillis - lastTempRead >= TEMP_READ_INTERVAL) {
         lastTempRead = currentMillis;
-        tempSensor->readTemperature();  // Comment this line to disable temperature reading
+        tempSensor->readTemperature();  // DHT22 sensor
+        ds18b20Sensor->readTemperature();  // DS18B20 sensor
+    }
+
+    // Handle MQTT connection and publishing
+    mqttManager->loop();
+
+    // Publish sensor data to MQTT periodically (only when WiFi is connected)
+    if (!isAPMode && WiFi.status() == WL_CONNECTED) {
+        if (currentMillis - lastMQTTPublish >= MQTT_PUBLISH_INTERVAL) {
+            lastMQTTPublish = currentMillis;
+            if (mqttManager->isConnected()) {
+                mqttManager->publishAllSensorData();
+            }
+        }
     }
 }
